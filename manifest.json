@@ -1,0 +1,14 @@
+{
+  "manifest_version": 2,
+  "name": "lel",
+  "description": "betsson",
+  "version": "1.0",
+  "browser_action": {
+    "default_popup": "index.html"
+  },
+  "permissions": [
+    "https://ajax.googleapis.com/",
+    "https://sbfacade.bpsgameserver.com/"
+  ],
+  "content_security_policy": "script-src 'self' https://ajax.googleapis.com; object-src 'self'"
+}
