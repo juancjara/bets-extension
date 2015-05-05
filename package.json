@@ -1,0 +1,40 @@
+{
+  "name": "bets-extension",
+  "version": "1.0.0",
+  "description": "none",
+  "main": "''",
+  "scripts": {
+    "watchClient": "watchify src/js/client/app.js -o build/js/clientBundle.js -v",
+    "start": "npm run watchClient & gulp",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "babelify": "^6.0.2",
+    "browserify": "^9.0.8",
+    "gulp": "^3.8.11",
+    "gulp-autoprefixer": "^2.1.0",
+    "gulp-less": "^3.0.2",
+    "gulp-notify": "^2.2.0",
+    "require-dir": "^0.3.0",
+    "watchify": "^3.1.0"
+  },
+  "browserify": {
+    "transform": [
+      "babelify"
+    ]
+  },
+  "dependencies": {
+    "moment": "^2.10.2",
+    "react": "^0.13.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/juancjara/bets-extension.git"
+  },
+  "author": "jcj",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/juancjara/bets-extension/issues"
+  },
+  "homepage": "https://github.com/juancjara/bets-extension"
+}
