@@ -4,8 +4,9 @@
   "description": "none",
   "main": "''",
   "scripts": {
+    "watchBackground": "watchify src/js/background/app.js -o build/js/background-bundle.js -v",
     "watchClient": "watchify src/js/client/app.js -o build/js/clientBundle.js -v",
-    "start": "npm run watchClient & gulp",
+    "start": "npm run watchClient & npm run watchBackground & gulp",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {

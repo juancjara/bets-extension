@@ -1,16 +1,8 @@
-console.log('loaded');
-var url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/PlayableMarketServicesV2.svc/jsonp/FetchLiveEventsMatchWinnerJSONP?unique=2_33_1&segmentID=613&languageCode=pe';
+import httpRequest from './httpRequest';
 
-function httpRequest(url, cb) {
-  var xhr = new XMLHttpRequest();
-  xhr.open("GET", url, true);
-  xhr.onreadystatechange = function() {
-    if (xhr.readyState == 4) {
-      cb(xhr.responseText);
-    }
-  }
-  xhr.send();
-}
+const url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/' +
+  'PlayableMarketServicesV2.svc/jsonp/FetchLiveEventsMatchWinnerJSONP' +
+  '?unique=2_33_1&segmentID=613&languageCode=pe';
 
 function ParseEvents(evt) {
   evt.events.forEach(function(game) {
@@ -29,17 +21,13 @@ function ParseEvents(evt) {
   })
 }
 
-function parseOngoingEvents(data) {
+function parseData(data) {
   var ongoingEvents = data.FetchLiveEventsMatchWinnerJSONPResult.OngoingEvents;
   ongoingEvents.map(function(ev) {
     return ParseEvents(ev);
   })
 }
 
-$('#btn').on('click', function() {
-  httpRequest(url, function(data) {
-    var parseData = JSON.parse(data);
-    parseOngoingEvents(parseData);
-  });
-})
-
+httpRequest.send(url, (response) => {
+  parseData(JSON.parse(response));
+});
