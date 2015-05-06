@@ -1,4 +1,5 @@
 import httpRequest from './httpRequest';
+import chromeNotification from './chromeNotification';
 
 const url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/' +
   'PlayableMarketServicesV2.svc/jsonp/FetchLiveEventsMatchWinnerJSONP' +

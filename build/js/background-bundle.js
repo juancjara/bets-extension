@@ -7,6 +7,10 @@ var _httpRequest = require('./httpRequest');
 
 var _httpRequest2 = _interopRequireDefault(_httpRequest);
 
+var _chromeNotification = require('./chromeNotification');
+
+var _chromeNotification2 = _interopRequireDefault(_chromeNotification);
+
 var url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/' + 'PlayableMarketServicesV2.svc/jsonp/FetchLiveEventsMatchWinnerJSONP' + '?unique=2_33_1&segmentID=613&languageCode=pe';
 
 function ParseEvents(evt) {
@@ -36,7 +40,10 @@ _httpRequest2['default'].send(url, function (response) {
   parseData(JSON.parse(response));
 });
 
-},{"./httpRequest":2}],2:[function(require,module,exports){
+},{"./chromeNotification":2,"./httpRequest":3}],2:[function(require,module,exports){
+"use strict";
+
+},{}],3:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
