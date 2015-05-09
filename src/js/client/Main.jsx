@@ -1,46 +1,41 @@
 import React from 'react';
 import EventView from './EventView.jsx';
+import db from '../background/db';
 
 let Main = React.createClass({
-  getDefaultProps() {
+  getInitialState: function() {
     return {
-      events: [
-        {
-          categoryName: 'futbol',
-          name: 'Sporting Cristal - Unión Comercio',
-          periodName: '1er tiempo',
-          subCategoryName: 'Peru Primera División Apertura',
-          gameResults: '0-0',
-          teamsOdds: [
-            {team: 'Sporting Cristal', odds: '1.52'},
-            {team: 'Empate', odds: '2.38'},
-            {team: 'Unión Comercio', odds: '5.3'}
-          ]
-        },
-        {
-          categoryName: 'futbol',
-          name: 'A - B',
-          periodName: '1er tiempo',
-          subCategoryName: 'Peru Primera División Apertura',
-          gameResults: '0-0',
-          teamsOdds: [
-            {team: 'A', odds: '1.52'},
-            {team: 'Empate', odds: '2.38'},
-            {team: 'B', odds: '5.3'}
-          ]
-        }
-      ]
+      liveEvents: []
     };
   },
 
+  update() {
+    /*db.getGames(data => {
+      console.log('aca');
+      let dataParse = JSON.parse(data);
+      console.log('dataParse', dataParse);
+      this.setState({liveEvents: dataParse});
+    })*/
+  },
+
+  componentDidMount() {
+    //this.update();
+  },
+
   render() {
-    let events = this.props.events.map((item, i) => {
-      return <EventView key = {i} {...item} />
+    debugger;
+    let liveEvents = this.props.liveEvents.map((item, i) => {
+      return (
+        <div key = {i}>
+          <h1>{item.name}</h1>
+          <EventView events = {item.events} />          
+        </div>
+      )
     })
 
     return (
       <div>
-        {events}
+        {liveEvents}
       </div>
     );
   }

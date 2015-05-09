@@ -1,4 +1,2228 @@
 (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+'use strict';
+
+var asap = require('asap')
+
+module.exports = Promise
+function Promise(fn) {
+  if (typeof this !== 'object') throw new TypeError('Promises must be constructed via new')
+  if (typeof fn !== 'function') throw new TypeError('not a function')
+  var state = null
+  var value = null
+  var deferreds = []
+  var self = this
+
+  this.then = function(onFulfilled, onRejected) {
+    return new Promise(function(resolve, reject) {
+      handle(new Handler(onFulfilled, onRejected, resolve, reject))
+    })
+  }
+
+  function handle(deferred) {
+    if (state === null) {
+      deferreds.push(deferred)
+      return
+    }
+    asap(function() {
+      var cb = state ? deferred.onFulfilled : deferred.onRejected
+      if (cb === null) {
+        (state ? deferred.resolve : deferred.reject)(value)
+        return
+      }
+      var ret
+      try {
+        ret = cb(value)
+      }
+      catch (e) {
+        deferred.reject(e)
+        return
+      }
+      deferred.resolve(ret)
+    })
+  }
+
+  function resolve(newValue) {
+    try { //Promise Resolution Procedure: https://github.com/promises-aplus/promises-spec#the-promise-resolution-procedure
+      if (newValue === self) throw new TypeError('A promise cannot be resolved with itself.')
+      if (newValue && (typeof newValue === 'object' || typeof newValue === 'function')) {
+        var then = newValue.then
+        if (typeof then === 'function') {
+          doResolve(then.bind(newValue), resolve, reject)
+          return
+        }
+      }
+      state = true
+      value = newValue
+      finale()
+    } catch (e) { reject(e) }
+  }
+
+  function reject(newValue) {
+    state = false
+    value = newValue
+    finale()
+  }
+
+  function finale() {
+    for (var i = 0, len = deferreds.length; i < len; i++)
+      handle(deferreds[i])
+    deferreds = null
+  }
+
+  doResolve(fn, resolve, reject)
+}
+
+
+function Handler(onFulfilled, onRejected, resolve, reject){
+  this.onFulfilled = typeof onFulfilled === 'function' ? onFulfilled : null
+  this.onRejected = typeof onRejected === 'function' ? onRejected : null
+  this.resolve = resolve
+  this.reject = reject
+}
+
+/**
+ * Take a potentially misbehaving resolver function and make sure
+ * onFulfilled and onRejected are only called once.
+ *
+ * Makes no guarantees about asynchrony.
+ */
+function doResolve(fn, onFulfilled, onRejected) {
+  var done = false;
+  try {
+    fn(function (value) {
+      if (done) return
+      done = true
+      onFulfilled(value)
+    }, function (reason) {
+      if (done) return
+      done = true
+      onRejected(reason)
+    })
+  } catch (ex) {
+    if (done) return
+    done = true
+    onRejected(ex)
+  }
+}
+
+},{"asap":3}],2:[function(require,module,exports){
+'use strict';
+
+//This file contains then/promise specific extensions to the core promise API
+
+var Promise = require('./core.js')
+var asap = require('asap')
+
+module.exports = Promise
+
+/* Static Functions */
+
+function ValuePromise(value) {
+  this.then = function (onFulfilled) {
+    if (typeof onFulfilled !== 'function') return this
+    return new Promise(function (resolve, reject) {
+      asap(function () {
+        try {
+          resolve(onFulfilled(value))
+        } catch (ex) {
+          reject(ex);
+        }
+      })
+    })
+  }
+}
+ValuePromise.prototype = Object.create(Promise.prototype)
+
+var TRUE = new ValuePromise(true)
+var FALSE = new ValuePromise(false)
+var NULL = new ValuePromise(null)
+var UNDEFINED = new ValuePromise(undefined)
+var ZERO = new ValuePromise(0)
+var EMPTYSTRING = new ValuePromise('')
+
+Promise.resolve = function (value) {
+  if (value instanceof Promise) return value
+
+  if (value === null) return NULL
+  if (value === undefined) return UNDEFINED
+  if (value === true) return TRUE
+  if (value === false) return FALSE
+  if (value === 0) return ZERO
+  if (value === '') return EMPTYSTRING
+
+  if (typeof value === 'object' || typeof value === 'function') {
+    try {
+      var then = value.then
+      if (typeof then === 'function') {
+        return new Promise(then.bind(value))
+      }
+    } catch (ex) {
+      return new Promise(function (resolve, reject) {
+        reject(ex)
+      })
+    }
+  }
+
+  return new ValuePromise(value)
+}
+
+Promise.from = Promise.cast = function (value) {
+  var err = new Error('Promise.from and Promise.cast are deprecated, use Promise.resolve instead')
+  err.name = 'Warning'
+  console.warn(err.stack)
+  return Promise.resolve(value)
+}
+
+Promise.denodeify = function (fn, argumentCount) {
+  argumentCount = argumentCount || Infinity
+  return function () {
+    var self = this
+    var args = Array.prototype.slice.call(arguments)
+    return new Promise(function (resolve, reject) {
+      while (args.length && args.length > argumentCount) {
+        args.pop()
+      }
+      args.push(function (err, res) {
+        if (err) reject(err)
+        else resolve(res)
+      })
+      fn.apply(self, args)
+    })
+  }
+}
+Promise.nodeify = function (fn) {
+  return function () {
+    var args = Array.prototype.slice.call(arguments)
+    var callback = typeof args[args.length - 1] === 'function' ? args.pop() : null
+    try {
+      return fn.apply(this, arguments).nodeify(callback)
+    } catch (ex) {
+      if (callback === null || typeof callback == 'undefined') {
+        return new Promise(function (resolve, reject) { reject(ex) })
+      } else {
+        asap(function () {
+          callback(ex)
+        })
+      }
+    }
+  }
+}
+
+Promise.all = function () {
+  var calledWithArray = arguments.length === 1 && Array.isArray(arguments[0])
+  var args = Array.prototype.slice.call(calledWithArray ? arguments[0] : arguments)
+
+  if (!calledWithArray) {
+    var err = new Error('Promise.all should be called with a single array, calling it with multiple arguments is deprecated')
+    err.name = 'Warning'
+    console.warn(err.stack)
+  }
+
+  return new Promise(function (resolve, reject) {
+    if (args.length === 0) return resolve([])
+    var remaining = args.length
+    function res(i, val) {
+      try {
+        if (val && (typeof val === 'object' || typeof val === 'function')) {
+          var then = val.then
+          if (typeof then === 'function') {
+            then.call(val, function (val) { res(i, val) }, reject)
+            return
+          }
+        }
+        args[i] = val
+        if (--remaining === 0) {
+          resolve(args);
+        }
+      } catch (ex) {
+        reject(ex)
+      }
+    }
+    for (var i = 0; i < args.length; i++) {
+      res(i, args[i])
+    }
+  })
+}
+
+Promise.reject = function (value) {
+  return new Promise(function (resolve, reject) { 
+    reject(value);
+  });
+}
+
+Promise.race = function (values) {
+  return new Promise(function (resolve, reject) { 
+    values.forEach(function(value){
+      Promise.resolve(value).then(resolve, reject);
+    })
+  });
+}
+
+/* Prototype Methods */
+
+Promise.prototype.done = function (onFulfilled, onRejected) {
+  var self = arguments.length ? this.then.apply(this, arguments) : this
+  self.then(null, function (err) {
+    asap(function () {
+      throw err
+    })
+  })
+}
+
+Promise.prototype.nodeify = function (callback) {
+  if (typeof callback != 'function') return this
+
+  this.then(function (value) {
+    asap(function () {
+      callback(null, value)
+    })
+  }, function (err) {
+    asap(function () {
+      callback(err)
+    })
+  })
+}
+
+Promise.prototype['catch'] = function (onRejected) {
+  return this.then(null, onRejected);
+}
+
+},{"./core.js":1,"asap":3}],3:[function(require,module,exports){
+(function (process){
+
+// Use the fastest possible means to execute a task in a future turn
+// of the event loop.
+
+// linked list of tasks (single, with head node)
+var head = {task: void 0, next: null};
+var tail = head;
+var flushing = false;
+var requestFlush = void 0;
+var isNodeJS = false;
+
+function flush() {
+    /* jshint loopfunc: true */
+
+    while (head.next) {
+        head = head.next;
+        var task = head.task;
+        head.task = void 0;
+        var domain = head.domain;
+
+        if (domain) {
+            head.domain = void 0;
+            domain.enter();
+        }
+
+        try {
+            task();
+
+        } catch (e) {
+            if (isNodeJS) {
+                // In node, uncaught exceptions are considered fatal errors.
+                // Re-throw them synchronously to interrupt flushing!
+
+                // Ensure continuation if the uncaught exception is suppressed
+                // listening "uncaughtException" events (as domains does).
+                // Continue in next event to avoid tick recursion.
+                if (domain) {
+                    domain.exit();
+                }
+                setTimeout(flush, 0);
+                if (domain) {
+                    domain.enter();
+                }
+
+                throw e;
+
+            } else {
+                // In browsers, uncaught exceptions are not fatal.
+                // Re-throw them asynchronously to avoid slow-downs.
+                setTimeout(function() {
+                   throw e;
+                }, 0);
+            }
+        }
+
+        if (domain) {
+            domain.exit();
+        }
+    }
+
+    flushing = false;
+}
+
+if (typeof process !== "undefined" && process.nextTick) {
+    // Node.js before 0.9. Note that some fake-Node environments, like the
+    // Mocha test runner, introduce a `process` global without a `nextTick`.
+    isNodeJS = true;
+
+    requestFlush = function () {
+        process.nextTick(flush);
+    };
+
+} else if (typeof setImmediate === "function") {
+    // In IE10, Node.js 0.9+, or https://github.com/NobleJS/setImmediate
+    if (typeof window !== "undefined") {
+        requestFlush = setImmediate.bind(window, flush);
+    } else {
+        requestFlush = function () {
+            setImmediate(flush);
+        };
+    }
+
+} else if (typeof MessageChannel !== "undefined") {
+    // modern browsers
+    // http://www.nonblocking.io/2011/06/windownexttick.html
+    var channel = new MessageChannel();
+    channel.port1.onmessage = flush;
+    requestFlush = function () {
+        channel.port2.postMessage(0);
+    };
+
+} else {
+    // old browsers
+    requestFlush = function () {
+        setTimeout(flush, 0);
+    };
+}
+
+function asap(task) {
+    tail = tail.next = {
+        task: task,
+        domain: isNodeJS && process.domain,
+        next: null
+    };
+
+    if (!flushing) {
+        flushing = true;
+        requestFlush();
+    }
+};
+
+module.exports = asap;
+
+
+}).call(this,require('_process'))
+},{"_process":164}],4:[function(require,module,exports){
+// Some code originally from async_storage.js in
+// [Gaia](https://github.com/mozilla-b2g/gaia).
+(function() {
+    'use strict';
+
+    // Originally found in https://github.com/mozilla-b2g/gaia/blob/e8f624e4cc9ea945727278039b3bc9bcb9f8667a/shared/js/async_storage.js
+
+    // Promises!
+    var Promise = (typeof module !== 'undefined' && module.exports) ?
+                  require('promise') : this.Promise;
+
+    // Initialize IndexedDB; fall back to vendor-prefixed versions if needed.
+    var indexedDB = indexedDB || this.indexedDB || this.webkitIndexedDB ||
+                    this.mozIndexedDB || this.OIndexedDB ||
+                    this.msIndexedDB;
+
+    // If IndexedDB isn't available, we get outta here!
+    if (!indexedDB) {
+        return;
+    }
+
+    // Open the IndexedDB database (automatically creates one if one didn't
+    // previously exist), using any options set in the config.
+    function _initStorage(options) {
+        var self = this;
+        var dbInfo = {
+            db: null
+        };
+
+        if (options) {
+            for (var i in options) {
+                dbInfo[i] = options[i];
+            }
+        }
+
+        return new Promise(function(resolve, reject) {
+            var openreq = indexedDB.open(dbInfo.name, dbInfo.version);
+            openreq.onerror = function() {
+                reject(openreq.error);
+            };
+            openreq.onupgradeneeded = function() {
+                // First time setup: create an empty object store
+                openreq.result.createObjectStore(dbInfo.storeName);
+            };
+            openreq.onsuccess = function() {
+                dbInfo.db = openreq.result;
+                self._dbInfo = dbInfo;
+                resolve();
+            };
+        });
+    }
+
+    function getItem(key, callback) {
+        var self = this;
+
+        // Cast the key to a string, as that's all we can set as a key.
+        if (typeof key !== 'string') {
+            window.console.warn(key +
+                                ' used as a key, but it is not a string.');
+            key = String(key);
+        }
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                var store = dbInfo.db.transaction(dbInfo.storeName, 'readonly')
+                    .objectStore(dbInfo.storeName);
+                var req = store.get(key);
+
+                req.onsuccess = function() {
+                    var value = req.result;
+                    if (value === undefined) {
+                        value = null;
+                    }
+
+                    resolve(value);
+                };
+
+                req.onerror = function() {
+                    reject(req.error);
+                };
+            }).catch(reject);
+        });
+
+        executeDeferedCallback(promise, callback);
+        return promise;
+    }
+
+    // Iterate over all items stored in database.
+    function iterate(iterator, callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                var store = dbInfo.db.transaction(dbInfo.storeName, 'readonly')
+                                     .objectStore(dbInfo.storeName);
+
+                var req = store.openCursor();
+                var iterationNumber = 1;
+
+                req.onsuccess = function() {
+                    var cursor = req.result;
+
+                    if (cursor) {
+                        var result = iterator(cursor.value, cursor.key, iterationNumber++);
+
+                        if (result !== void(0)) {
+                            resolve(result);
+                        } else {
+                            cursor.continue();
+                        }
+                    } else {
+                        resolve();
+                    }
+                };
+
+                req.onerror = function() {
+                    reject(req.error);
+                };
+            }).catch(reject);
+        });
+
+        executeDeferedCallback(promise, callback);
+
+        return promise;
+    }
+
+    function setItem(key, value, callback) {
+        var self = this;
+
+        // Cast the key to a string, as that's all we can set as a key.
+        if (typeof key !== 'string') {
+            window.console.warn(key +
+                                ' used as a key, but it is not a string.');
+            key = String(key);
+        }
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                var transaction = dbInfo.db.transaction(dbInfo.storeName, 'readwrite');
+                var store = transaction.objectStore(dbInfo.storeName);
+
+                // The reason we don't _save_ null is because IE 10 does
+                // not support saving the `null` type in IndexedDB. How
+                // ironic, given the bug below!
+                // See: https://github.com/mozilla/localForage/issues/161
+                if (value === null) {
+                    value = undefined;
+                }
+
+                var req = store.put(value, key);
+                transaction.oncomplete = function() {
+                    // Cast to undefined so the value passed to
+                    // callback/promise is the same as what one would get out
+                    // of `getItem()` later. This leads to some weirdness
+                    // (setItem('foo', undefined) will return `null`), but
+                    // it's not my fault localStorage is our baseline and that
+                    // it's weird.
+                    if (value === undefined) {
+                        value = null;
+                    }
+
+                    resolve(value);
+                };
+                transaction.onabort = transaction.onerror = function() {
+                    reject(req.error);
+                };
+            }).catch(reject);
+        });
+
+        executeDeferedCallback(promise, callback);
+        return promise;
+    }
+
+    function removeItem(key, callback) {
+        var self = this;
+
+        // Cast the key to a string, as that's all we can set as a key.
+        if (typeof key !== 'string') {
+            window.console.warn(key +
+                                ' used as a key, but it is not a string.');
+            key = String(key);
+        }
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                var transaction = dbInfo.db.transaction(dbInfo.storeName, 'readwrite');
+                var store = transaction.objectStore(dbInfo.storeName);
+
+                // We use a Grunt task to make this safe for IE and some
+                // versions of Android (including those used by Cordova).
+                // Normally IE won't like `.delete()` and will insist on
+                // using `['delete']()`, but we have a build step that
+                // fixes this for us now.
+                var req = store.delete(key);
+                transaction.oncomplete = function() {
+                    resolve();
+                };
+
+                transaction.onerror = function() {
+                    reject(req.error);
+                };
+
+                // The request will be aborted if we've exceeded our storage
+                // space. In this case, we will reject with a specific
+                // "QuotaExceededError".
+                transaction.onabort = function(event) {
+                    var error = event.target.error;
+                    if (error === 'QuotaExceededError') {
+                        reject(error);
+                    }
+                };
+            }).catch(reject);
+        });
+
+        executeDeferedCallback(promise, callback);
+        return promise;
+    }
+
+    function clear(callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                var transaction = dbInfo.db.transaction(dbInfo.storeName, 'readwrite');
+                var store = transaction.objectStore(dbInfo.storeName);
+                var req = store.clear();
+
+                transaction.oncomplete = function() {
+                    resolve();
+                };
+
+                transaction.onabort = transaction.onerror = function() {
+                    reject(req.error);
+                };
+            }).catch(reject);
+        });
+
+        executeDeferedCallback(promise, callback);
+        return promise;
+    }
+
+    function length(callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                var store = dbInfo.db.transaction(dbInfo.storeName, 'readonly')
+                              .objectStore(dbInfo.storeName);
+                var req = store.count();
+
+                req.onsuccess = function() {
+                    resolve(req.result);
+                };
+
+                req.onerror = function() {
+                    reject(req.error);
+                };
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function key(n, callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            if (n < 0) {
+                resolve(null);
+
+                return;
+            }
+
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                var store = dbInfo.db.transaction(dbInfo.storeName, 'readonly')
+                              .objectStore(dbInfo.storeName);
+
+                var advanced = false;
+                var req = store.openCursor();
+                req.onsuccess = function() {
+                    var cursor = req.result;
+                    if (!cursor) {
+                        // this means there weren't enough keys
+                        resolve(null);
+
+                        return;
+                    }
+
+                    if (n === 0) {
+                        // We have the first key, return it if that's what they
+                        // wanted.
+                        resolve(cursor.key);
+                    } else {
+                        if (!advanced) {
+                            // Otherwise, ask the cursor to skip ahead n
+                            // records.
+                            advanced = true;
+                            cursor.advance(n);
+                        } else {
+                            // When we get here, we've got the nth key.
+                            resolve(cursor.key);
+                        }
+                    }
+                };
+
+                req.onerror = function() {
+                    reject(req.error);
+                };
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function keys(callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                var store = dbInfo.db.transaction(dbInfo.storeName, 'readonly')
+                              .objectStore(dbInfo.storeName);
+
+                var req = store.openCursor();
+                var keys = [];
+
+                req.onsuccess = function() {
+                    var cursor = req.result;
+
+                    if (!cursor) {
+                        resolve(keys);
+                        return;
+                    }
+
+                    keys.push(cursor.key);
+                    cursor.continue();
+                };
+
+                req.onerror = function() {
+                    reject(req.error);
+                };
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function executeCallback(promise, callback) {
+        if (callback) {
+            promise.then(function(result) {
+                callback(null, result);
+            }, function(error) {
+                callback(error);
+            });
+        }
+    }
+
+    function executeDeferedCallback(promise, callback) {
+        if (callback) {
+            promise.then(function(result) {
+                deferCallback(callback, result);
+            }, function(error) {
+                callback(error);
+            });
+        }
+    }
+
+    // Under Chrome the callback is called before the changes (save, clear)
+    // are actually made. So we use a defer function which wait that the
+    // call stack to be empty.
+    // For more info : https://github.com/mozilla/localForage/issues/175
+    // Pull request : https://github.com/mozilla/localForage/pull/178
+    function deferCallback(callback, result) {
+        if (callback) {
+            return setTimeout(function() {
+                return callback(null, result);
+            }, 0);
+        }
+    }
+
+    var asyncStorage = {
+        _driver: 'asyncStorage',
+        _initStorage: _initStorage,
+        iterate: iterate,
+        getItem: getItem,
+        setItem: setItem,
+        removeItem: removeItem,
+        clear: clear,
+        length: length,
+        key: key,
+        keys: keys
+    };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = asyncStorage;
+    } else if (typeof define === 'function' && define.amd) {
+        define('asyncStorage', function() {
+            return asyncStorage;
+        });
+    } else {
+        this.asyncStorage = asyncStorage;
+    }
+}).call(window);
+
+},{"promise":2}],5:[function(require,module,exports){
+// If IndexedDB isn't available, we'll fall back to localStorage.
+// Note that this will have considerable performance and storage
+// side-effects (all data will be serialized on save and only data that
+// can be converted to a string via `JSON.stringify()` will be saved).
+(function() {
+    'use strict';
+
+    // Promises!
+    var Promise = (typeof module !== 'undefined' && module.exports) ?
+                  require('promise') : this.Promise;
+
+    var globalObject = this;
+    var serializer = null;
+    var localStorage = null;
+
+    // If the app is running inside a Google Chrome packaged webapp, or some
+    // other context where localStorage isn't available, we don't use
+    // localStorage. This feature detection is preferred over the old
+    // `if (window.chrome && window.chrome.runtime)` code.
+    // See: https://github.com/mozilla/localForage/issues/68
+    try {
+        // If localStorage isn't available, we get outta here!
+        // This should be inside a try catch
+        if (!this.localStorage || !('setItem' in this.localStorage)) {
+            return;
+        }
+        // Initialize localStorage and create a variable to use throughout
+        // the code.
+        localStorage = this.localStorage;
+    } catch (e) {
+        return;
+    }
+
+    var ModuleType = {
+        DEFINE: 1,
+        EXPORT: 2,
+        WINDOW: 3
+    };
+
+    // Attaching to window (i.e. no module loader) is the assumed,
+    // simple default.
+    var moduleType = ModuleType.WINDOW;
+
+    // Find out what kind of module setup we have; if none, we'll just attach
+    // localForage to the main window.
+    if (typeof module !== 'undefined' && module.exports) {
+        moduleType = ModuleType.EXPORT;
+    } else if (typeof define === 'function' && define.amd) {
+        moduleType = ModuleType.DEFINE;
+    }
+
+    // Config the localStorage backend, using options set in the config.
+    function _initStorage(options) {
+        var self = this;
+        var dbInfo = {};
+        if (options) {
+            for (var i in options) {
+                dbInfo[i] = options[i];
+            }
+        }
+
+        dbInfo.keyPrefix = dbInfo.name + '/';
+
+        self._dbInfo = dbInfo;
+
+        var serializerPromise = new Promise(function(resolve/*, reject*/) {
+            // We allow localForage to be declared as a module or as a
+            // library available without AMD/require.js.
+            if (moduleType === ModuleType.DEFINE) {
+                require(['localforageSerializer'], resolve);
+            } else if (moduleType === ModuleType.EXPORT) {
+                // Making it browserify friendly
+                resolve(require('./../utils/serializer'));
+            } else {
+                resolve(globalObject.localforageSerializer);
+            }
+        });
+
+        return serializerPromise.then(function(lib) {
+            serializer = lib;
+            return Promise.resolve();
+        });
+    }
+
+    // Remove all keys from the datastore, effectively destroying all data in
+    // the app's key/value store!
+    function clear(callback) {
+        var self = this;
+        var promise = self.ready().then(function() {
+            var keyPrefix = self._dbInfo.keyPrefix;
+
+            for (var i = localStorage.length - 1; i >= 0; i--) {
+                var key = localStorage.key(i);
+
+                if (key.indexOf(keyPrefix) === 0) {
+                    localStorage.removeItem(key);
+                }
+            }
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    // Retrieve an item from the store. Unlike the original async_storage
+    // library in Gaia, we don't modify return values at all. If a key's value
+    // is `undefined`, we pass that value to the callback function.
+    function getItem(key, callback) {
+        var self = this;
+
+        // Cast the key to a string, as that's all we can set as a key.
+        if (typeof key !== 'string') {
+            window.console.warn(key +
+                                ' used as a key, but it is not a string.');
+            key = String(key);
+        }
+
+        var promise = self.ready().then(function() {
+            var dbInfo = self._dbInfo;
+            var result = localStorage.getItem(dbInfo.keyPrefix + key);
+
+            // If a result was found, parse it from the serialized
+            // string into a JS object. If result isn't truthy, the key
+            // is likely undefined and we'll pass it straight to the
+            // callback.
+            if (result) {
+                result = serializer.deserialize(result);
+            }
+
+            return result;
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    // Iterate over all items in the store.
+    function iterate(iterator, callback) {
+        var self = this;
+
+        var promise = self.ready().then(function() {
+            var keyPrefix = self._dbInfo.keyPrefix;
+            var keyPrefixLength = keyPrefix.length;
+            var length = localStorage.length;
+
+            for (var i = 0; i < length; i++) {
+                var key = localStorage.key(i);
+                var value = localStorage.getItem(key);
+
+                // If a result was found, parse it from the serialized
+                // string into a JS object. If result isn't truthy, the
+                // key is likely undefined and we'll pass it straight
+                // to the iterator.
+                if (value) {
+                    value = serializer.deserialize(value);
+                }
+
+                value = iterator(value, key.substring(keyPrefixLength), i + 1);
+
+                if (value !== void(0)) {
+                    return value;
+                }
+            }
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    // Same as localStorage's key() method, except takes a callback.
+    function key(n, callback) {
+        var self = this;
+        var promise = self.ready().then(function() {
+            var dbInfo = self._dbInfo;
+            var result;
+            try {
+                result = localStorage.key(n);
+            } catch (error) {
+                result = null;
+            }
+
+            // Remove the prefix from the key, if a key is found.
+            if (result) {
+                result = result.substring(dbInfo.keyPrefix.length);
+            }
+
+            return result;
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function keys(callback) {
+        var self = this;
+        var promise = self.ready().then(function() {
+            var dbInfo = self._dbInfo;
+            var length = localStorage.length;
+            var keys = [];
+
+            for (var i = 0; i < length; i++) {
+                if (localStorage.key(i).indexOf(dbInfo.keyPrefix) === 0) {
+                    keys.push(localStorage.key(i).substring(dbInfo.keyPrefix.length));
+                }
+            }
+
+            return keys;
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    // Supply the number of keys in the datastore to the callback function.
+    function length(callback) {
+        var self = this;
+        var promise = self.keys().then(function(keys) {
+            return keys.length;
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    // Remove an item from the store, nice and simple.
+    function removeItem(key, callback) {
+        var self = this;
+
+        // Cast the key to a string, as that's all we can set as a key.
+        if (typeof key !== 'string') {
+            window.console.warn(key +
+                                ' used as a key, but it is not a string.');
+            key = String(key);
+        }
+
+        var promise = self.ready().then(function() {
+            var dbInfo = self._dbInfo;
+            localStorage.removeItem(dbInfo.keyPrefix + key);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    // Set a key's value and run an optional callback once the value is set.
+    // Unlike Gaia's implementation, the callback function is passed the value,
+    // in case you want to operate on that value only after you're sure it
+    // saved, or something like that.
+    function setItem(key, value, callback) {
+        var self = this;
+
+        // Cast the key to a string, as that's all we can set as a key.
+        if (typeof key !== 'string') {
+            window.console.warn(key +
+                                ' used as a key, but it is not a string.');
+            key = String(key);
+        }
+
+        var promise = self.ready().then(function() {
+            // Convert undefined values to null.
+            // https://github.com/mozilla/localForage/pull/42
+            if (value === undefined) {
+                value = null;
+            }
+
+            // Save the original value to pass to the callback.
+            var originalValue = value;
+
+            return new Promise(function(resolve, reject) {
+                serializer.serialize(value, function(value, error) {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        try {
+                            var dbInfo = self._dbInfo;
+                            localStorage.setItem(dbInfo.keyPrefix + key, value);
+                            resolve(originalValue);
+                        } catch (e) {
+                            // localStorage capacity exceeded.
+                            // TODO: Make this a specific error/event.
+                            if (e.name === 'QuotaExceededError' ||
+                                e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+                                reject(e);
+                            }
+                            reject(e);
+                        }
+                    }
+                });
+            });
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function executeCallback(promise, callback) {
+        if (callback) {
+            promise.then(function(result) {
+                callback(null, result);
+            }, function(error) {
+                callback(error);
+            });
+        }
+    }
+
+    var localStorageWrapper = {
+        _driver: 'localStorageWrapper',
+        _initStorage: _initStorage,
+        // Default API, from Gaia/localStorage.
+        iterate: iterate,
+        getItem: getItem,
+        setItem: setItem,
+        removeItem: removeItem,
+        clear: clear,
+        length: length,
+        key: key,
+        keys: keys
+    };
+
+    if (moduleType === ModuleType.EXPORT) {
+        module.exports = localStorageWrapper;
+    } else if (moduleType === ModuleType.DEFINE) {
+        define('localStorageWrapper', function() {
+            return localStorageWrapper;
+        });
+    } else {
+        this.localStorageWrapper = localStorageWrapper;
+    }
+}).call(window);
+
+},{"./../utils/serializer":8,"promise":2}],6:[function(require,module,exports){
+/*
+ * Includes code from:
+ *
+ * base64-arraybuffer
+ * https://github.com/niklasvh/base64-arraybuffer
+ *
+ * Copyright (c) 2012 Niklas von Hertzen
+ * Licensed under the MIT license.
+ */
+(function() {
+    'use strict';
+
+    // Promises!
+    var Promise = (typeof module !== 'undefined' && module.exports) ?
+                  require('promise') : this.Promise;
+
+    var globalObject = this;
+    var serializer = null;
+    var openDatabase = this.openDatabase;
+
+    // If WebSQL methods aren't available, we can stop now.
+    if (!openDatabase) {
+        return;
+    }
+
+    var ModuleType = {
+        DEFINE: 1,
+        EXPORT: 2,
+        WINDOW: 3
+    };
+
+    // Attaching to window (i.e. no module loader) is the assumed,
+    // simple default.
+    var moduleType = ModuleType.WINDOW;
+
+    // Find out what kind of module setup we have; if none, we'll just attach
+    // localForage to the main window.
+    if (typeof module !== 'undefined' && module.exports) {
+        moduleType = ModuleType.EXPORT;
+    } else if (typeof define === 'function' && define.amd) {
+        moduleType = ModuleType.DEFINE;
+    }
+
+    // Open the WebSQL database (automatically creates one if one didn't
+    // previously exist), using any options set in the config.
+    function _initStorage(options) {
+        var self = this;
+        var dbInfo = {
+            db: null
+        };
+
+        if (options) {
+            for (var i in options) {
+                dbInfo[i] = typeof(options[i]) !== 'string' ?
+                            options[i].toString() : options[i];
+            }
+        }
+
+        var serializerPromise = new Promise(function(resolve/*, reject*/) {
+            // We allow localForage to be declared as a module or as a
+            // library available without AMD/require.js.
+            if (moduleType === ModuleType.DEFINE) {
+                require(['localforageSerializer'], resolve);
+            } else if (moduleType === ModuleType.EXPORT) {
+                // Making it browserify friendly
+                resolve(require('./../utils/serializer'));
+            } else {
+                resolve(globalObject.localforageSerializer);
+            }
+        });
+
+        var dbInfoPromise = new Promise(function(resolve, reject) {
+            // Open the database; the openDatabase API will automatically
+            // create it for us if it doesn't exist.
+            try {
+                dbInfo.db = openDatabase(dbInfo.name, String(dbInfo.version),
+                                         dbInfo.description, dbInfo.size);
+            } catch (e) {
+                return self.setDriver(self.LOCALSTORAGE).then(function() {
+                    return self._initStorage(options);
+                }).then(resolve).catch(reject);
+            }
+
+            // Create our key/value table if it doesn't exist.
+            dbInfo.db.transaction(function(t) {
+                t.executeSql('CREATE TABLE IF NOT EXISTS ' + dbInfo.storeName +
+                             ' (id INTEGER PRIMARY KEY, key unique, value)', [],
+                             function() {
+                    self._dbInfo = dbInfo;
+                    resolve();
+                }, function(t, error) {
+                    reject(error);
+                });
+            });
+        });
+
+        return serializerPromise.then(function(lib) {
+            serializer = lib;
+            return dbInfoPromise;
+        });
+    }
+
+    function getItem(key, callback) {
+        var self = this;
+
+        // Cast the key to a string, as that's all we can set as a key.
+        if (typeof key !== 'string') {
+            window.console.warn(key +
+                                ' used as a key, but it is not a string.');
+            key = String(key);
+        }
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                dbInfo.db.transaction(function(t) {
+                    t.executeSql('SELECT * FROM ' + dbInfo.storeName +
+                                 ' WHERE key = ? LIMIT 1', [key],
+                                 function(t, results) {
+                        var result = results.rows.length ?
+                                     results.rows.item(0).value : null;
+
+                        // Check to see if this is serialized content we need to
+                        // unpack.
+                        if (result) {
+                            result = serializer.deserialize(result);
+                        }
+
+                        resolve(result);
+                    }, function(t, error) {
+
+                        reject(error);
+                    });
+                });
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function iterate(iterator, callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+
+                dbInfo.db.transaction(function(t) {
+                    t.executeSql('SELECT * FROM ' + dbInfo.storeName, [],
+                        function(t, results) {
+                            var rows = results.rows;
+                            var length = rows.length;
+
+                            for (var i = 0; i < length; i++) {
+                                var item = rows.item(i);
+                                var result = item.value;
+
+                                // Check to see if this is serialized content
+                                // we need to unpack.
+                                if (result) {
+                                    result = serializer.deserialize(result);
+                                }
+
+                                result = iterator(result, item.key, i + 1);
+
+                                // void(0) prevents problems with redefinition
+                                // of `undefined`.
+                                if (result !== void(0)) {
+                                    resolve(result);
+                                    return;
+                                }
+                            }
+
+                            resolve();
+                        }, function(t, error) {
+                            reject(error);
+                        });
+                });
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function setItem(key, value, callback) {
+        var self = this;
+
+        // Cast the key to a string, as that's all we can set as a key.
+        if (typeof key !== 'string') {
+            window.console.warn(key +
+                                ' used as a key, but it is not a string.');
+            key = String(key);
+        }
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                // The localStorage API doesn't return undefined values in an
+                // "expected" way, so undefined is always cast to null in all
+                // drivers. See: https://github.com/mozilla/localForage/pull/42
+                if (value === undefined) {
+                    value = null;
+                }
+
+                // Save the original value to pass to the callback.
+                var originalValue = value;
+
+                serializer.serialize(value, function(value, error) {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        var dbInfo = self._dbInfo;
+                        dbInfo.db.transaction(function(t) {
+                            t.executeSql('INSERT OR REPLACE INTO ' +
+                                         dbInfo.storeName +
+                                         ' (key, value) VALUES (?, ?)',
+                                         [key, value], function() {
+                                resolve(originalValue);
+                            }, function(t, error) {
+                                reject(error);
+                            });
+                        }, function(sqlError) { // The transaction failed; check
+                                                // to see if it's a quota error.
+                            if (sqlError.code === sqlError.QUOTA_ERR) {
+                                // We reject the callback outright for now, but
+                                // it's worth trying to re-run the transaction.
+                                // Even if the user accepts the prompt to use
+                                // more storage on Safari, this error will
+                                // be called.
+                                //
+                                // TODO: Try to re-run the transaction.
+                                reject(sqlError);
+                            }
+                        });
+                    }
+                });
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function removeItem(key, callback) {
+        var self = this;
+
+        // Cast the key to a string, as that's all we can set as a key.
+        if (typeof key !== 'string') {
+            window.console.warn(key +
+                                ' used as a key, but it is not a string.');
+            key = String(key);
+        }
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                dbInfo.db.transaction(function(t) {
+                    t.executeSql('DELETE FROM ' + dbInfo.storeName +
+                                 ' WHERE key = ?', [key], function() {
+
+                        resolve();
+                    }, function(t, error) {
+
+                        reject(error);
+                    });
+                });
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    // Deletes every item in the table.
+    // TODO: Find out if this resets the AUTO_INCREMENT number.
+    function clear(callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                dbInfo.db.transaction(function(t) {
+                    t.executeSql('DELETE FROM ' + dbInfo.storeName, [],
+                                 function() {
+                        resolve();
+                    }, function(t, error) {
+                        reject(error);
+                    });
+                });
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    // Does a simple `COUNT(key)` to get the number of items stored in
+    // localForage.
+    function length(callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                dbInfo.db.transaction(function(t) {
+                    // Ahhh, SQL makes this one soooooo easy.
+                    t.executeSql('SELECT COUNT(key) as c FROM ' +
+                                 dbInfo.storeName, [], function(t, results) {
+                        var result = results.rows.item(0).c;
+
+                        resolve(result);
+                    }, function(t, error) {
+
+                        reject(error);
+                    });
+                });
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    // Return the key located at key index X; essentially gets the key from a
+    // `WHERE id = ?`. This is the most efficient way I can think to implement
+    // this rarely-used (in my experience) part of the API, but it can seem
+    // inconsistent, because we do `INSERT OR REPLACE INTO` on `setItem()`, so
+    // the ID of each key will change every time it's updated. Perhaps a stored
+    // procedure for the `setItem()` SQL would solve this problem?
+    // TODO: Don't change ID on `setItem()`.
+    function key(n, callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                dbInfo.db.transaction(function(t) {
+                    t.executeSql('SELECT key FROM ' + dbInfo.storeName +
+                                 ' WHERE id = ? LIMIT 1', [n + 1],
+                                 function(t, results) {
+                        var result = results.rows.length ?
+                                     results.rows.item(0).key : null;
+                        resolve(result);
+                    }, function(t, error) {
+                        reject(error);
+                    });
+                });
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function keys(callback) {
+        var self = this;
+
+        var promise = new Promise(function(resolve, reject) {
+            self.ready().then(function() {
+                var dbInfo = self._dbInfo;
+                dbInfo.db.transaction(function(t) {
+                    t.executeSql('SELECT key FROM ' + dbInfo.storeName, [],
+                                 function(t, results) {
+                        var keys = [];
+
+                        for (var i = 0; i < results.rows.length; i++) {
+                            keys.push(results.rows.item(i).key);
+                        }
+
+                        resolve(keys);
+                    }, function(t, error) {
+
+                        reject(error);
+                    });
+                });
+            }).catch(reject);
+        });
+
+        executeCallback(promise, callback);
+        return promise;
+    }
+
+    function executeCallback(promise, callback) {
+        if (callback) {
+            promise.then(function(result) {
+                callback(null, result);
+            }, function(error) {
+                callback(error);
+            });
+        }
+    }
+
+    var webSQLStorage = {
+        _driver: 'webSQLStorage',
+        _initStorage: _initStorage,
+        iterate: iterate,
+        getItem: getItem,
+        setItem: setItem,
+        removeItem: removeItem,
+        clear: clear,
+        length: length,
+        key: key,
+        keys: keys
+    };
+
+    if (moduleType === ModuleType.DEFINE) {
+        define('webSQLStorage', function() {
+            return webSQLStorage;
+        });
+    } else if (moduleType === ModuleType.EXPORT) {
+        module.exports = webSQLStorage;
+    } else {
+        this.webSQLStorage = webSQLStorage;
+    }
+}).call(window);
+
+},{"./../utils/serializer":8,"promise":2}],7:[function(require,module,exports){
+(function() {
+    'use strict';
+
+    // Promises!
+    var Promise = (typeof module !== 'undefined' && module.exports) ?
+                  require('promise') : this.Promise;
+
+    // Custom drivers are stored here when `defineDriver()` is called.
+    // They are shared across all instances of localForage.
+    var CustomDrivers = {};
+
+    var DriverType = {
+        INDEXEDDB: 'asyncStorage',
+        LOCALSTORAGE: 'localStorageWrapper',
+        WEBSQL: 'webSQLStorage'
+    };
+
+    var DefaultDriverOrder = [
+        DriverType.INDEXEDDB,
+        DriverType.WEBSQL,
+        DriverType.LOCALSTORAGE
+    ];
+
+    var LibraryMethods = [
+        'clear',
+        'getItem',
+        'iterate',
+        'key',
+        'keys',
+        'length',
+        'removeItem',
+        'setItem'
+    ];
+
+    var ModuleType = {
+        DEFINE: 1,
+        EXPORT: 2,
+        WINDOW: 3
+    };
+
+    var DefaultConfig = {
+        description: '',
+        driver: DefaultDriverOrder.slice(),
+        name: 'localforage',
+        // Default DB size is _JUST UNDER_ 5MB, as it's the highest size
+        // we can use without a prompt.
+        size: 4980736,
+        storeName: 'keyvaluepairs',
+        version: 1.0
+    };
+
+    // Attaching to window (i.e. no module loader) is the assumed,
+    // simple default.
+    var moduleType = ModuleType.WINDOW;
+
+    // Find out what kind of module setup we have; if none, we'll just attach
+    // localForage to the main window.
+    if (typeof module !== 'undefined' && module.exports) {
+        moduleType = ModuleType.EXPORT;
+    } else if (typeof define === 'function' && define.amd) {
+        moduleType = ModuleType.DEFINE;
+    }
+
+    // Check to see if IndexedDB is available and if it is the latest
+    // implementation; it's our preferred backend library. We use "_spec_test"
+    // as the name of the database because it's not the one we'll operate on,
+    // but it's useful to make sure its using the right spec.
+    // See: https://github.com/mozilla/localForage/issues/128
+    var driverSupport = (function(self) {
+        // Initialize IndexedDB; fall back to vendor-prefixed versions
+        // if needed.
+        var indexedDB = indexedDB || self.indexedDB || self.webkitIndexedDB ||
+                        self.mozIndexedDB || self.OIndexedDB ||
+                        self.msIndexedDB;
+
+        var result = {};
+
+        result[DriverType.WEBSQL] = !!self.openDatabase;
+        result[DriverType.INDEXEDDB] = !!(function() {
+            // We mimic PouchDB here; just UA test for Safari (which, as of
+            // iOS 8/Yosemite, doesn't properly support IndexedDB).
+            // IndexedDB support is broken and different from Blink's.
+            // This is faster than the test case (and it's sync), so we just
+            // do this. *SIGH*
+            // http://bl.ocks.org/nolanlawson/raw/c83e9039edf2278047e9/
+            //
+            // We test for openDatabase because IE Mobile identifies itself
+            // as Safari. Oh the lulz...
+            if (typeof self.openDatabase !== 'undefined' && self.navigator &&
+                self.navigator.userAgent &&
+                /Safari/.test(self.navigator.userAgent) &&
+                !/Chrome/.test(self.navigator.userAgent)) {
+                return false;
+            }
+            try {
+                return indexedDB &&
+                       typeof indexedDB.open === 'function' &&
+                       // Some Samsung/HTC Android 4.0-4.3 devices
+                       // have older IndexedDB specs; if this isn't available
+                       // their IndexedDB is too old for us to use.
+                       // (Replaces the onupgradeneeded test.)
+                       typeof self.IDBKeyRange !== 'undefined';
+            } catch (e) {
+                return false;
+            }
+        })();
+
+        result[DriverType.LOCALSTORAGE] = !!(function() {
+            try {
+                return (self.localStorage &&
+                        ('setItem' in self.localStorage) &&
+                        (self.localStorage.setItem));
+            } catch (e) {
+                return false;
+            }
+        })();
+
+        return result;
+    })(this);
+
+    var isArray = Array.isArray || function(arg) {
+        return Object.prototype.toString.call(arg) === '[object Array]';
+    };
+
+    function callWhenReady(localForageInstance, libraryMethod) {
+        localForageInstance[libraryMethod] = function() {
+            var _args = arguments;
+            return localForageInstance.ready().then(function() {
+                return localForageInstance[libraryMethod].apply(localForageInstance, _args);
+            });
+        };
+    }
+
+    function extend() {
+        for (var i = 1; i < arguments.length; i++) {
+            var arg = arguments[i];
+
+            if (arg) {
+                for (var key in arg) {
+                    if (arg.hasOwnProperty(key)) {
+                        if (isArray(arg[key])) {
+                            arguments[0][key] = arg[key].slice();
+                        } else {
+                            arguments[0][key] = arg[key];
+                        }
+                    }
+                }
+            }
+        }
+
+        return arguments[0];
+    }
+
+    function isLibraryDriver(driverName) {
+        for (var driver in DriverType) {
+            if (DriverType.hasOwnProperty(driver) &&
+                DriverType[driver] === driverName) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    var globalObject = this;
+
+    function LocalForage(options) {
+        this._config = extend({}, DefaultConfig, options);
+        this._driverSet = null;
+        this._ready = false;
+        this._dbInfo = null;
+
+        // Add a stub for each driver API method that delays the call to the
+        // corresponding driver method until localForage is ready. These stubs
+        // will be replaced by the driver methods as soon as the driver is
+        // loaded, so there is no performance impact.
+        for (var i = 0; i < LibraryMethods.length; i++) {
+            callWhenReady(this, LibraryMethods[i]);
+        }
+
+        this.setDriver(this._config.driver);
+    }
+
+    LocalForage.prototype.INDEXEDDB = DriverType.INDEXEDDB;
+    LocalForage.prototype.LOCALSTORAGE = DriverType.LOCALSTORAGE;
+    LocalForage.prototype.WEBSQL = DriverType.WEBSQL;
+
+    // Set any config values for localForage; can be called anytime before
+    // the first API call (e.g. `getItem`, `setItem`).
+    // We loop through options so we don't overwrite existing config
+    // values.
+    LocalForage.prototype.config = function(options) {
+        // If the options argument is an object, we use it to set values.
+        // Otherwise, we return either a specified config value or all
+        // config values.
+        if (typeof(options) === 'object') {
+            // If localforage is ready and fully initialized, we can't set
+            // any new configuration values. Instead, we return an error.
+            if (this._ready) {
+                return new Error("Can't call config() after localforage " +
+                                 'has been used.');
+            }
+
+            for (var i in options) {
+                if (i === 'storeName') {
+                    options[i] = options[i].replace(/\W/g, '_');
+                }
+
+                this._config[i] = options[i];
+            }
+
+            // after all config options are set and
+            // the driver option is used, try setting it
+            if ('driver' in options && options.driver) {
+                this.setDriver(this._config.driver);
+            }
+
+            return true;
+        } else if (typeof(options) === 'string') {
+            return this._config[options];
+        } else {
+            return this._config;
+        }
+    };
+
+    // Used to define a custom driver, shared across all instances of
+    // localForage.
+    LocalForage.prototype.defineDriver = function(driverObject, callback,
+                                                  errorCallback) {
+        var defineDriver = new Promise(function(resolve, reject) {
+            try {
+                var driverName = driverObject._driver;
+                var complianceError = new Error(
+                    'Custom driver not compliant; see ' +
+                    'https://mozilla.github.io/localForage/#definedriver'
+                );
+                var namingError = new Error(
+                    'Custom driver name already in use: ' + driverObject._driver
+                );
+
+                // A driver name should be defined and not overlap with the
+                // library-defined, default drivers.
+                if (!driverObject._driver) {
+                    reject(complianceError);
+                    return;
+                }
+                if (isLibraryDriver(driverObject._driver)) {
+                    reject(namingError);
+                    return;
+                }
+
+                var customDriverMethods = LibraryMethods.concat('_initStorage');
+                for (var i = 0; i < customDriverMethods.length; i++) {
+                    var customDriverMethod = customDriverMethods[i];
+                    if (!customDriverMethod ||
+                        !driverObject[customDriverMethod] ||
+                        typeof driverObject[customDriverMethod] !== 'function') {
+                        reject(complianceError);
+                        return;
+                    }
+                }
+
+                var supportPromise = Promise.resolve(true);
+                if ('_support'  in driverObject) {
+                    if (driverObject._support && typeof driverObject._support === 'function') {
+                        supportPromise = driverObject._support();
+                    } else {
+                        supportPromise = Promise.resolve(!!driverObject._support);
+                    }
+                }
+
+                supportPromise.then(function(supportResult) {
+                    driverSupport[driverName] = supportResult;
+                    CustomDrivers[driverName] = driverObject;
+                    resolve();
+                }, reject);
+            } catch (e) {
+                reject(e);
+            }
+        });
+
+        defineDriver.then(callback, errorCallback);
+        return defineDriver;
+    };
+
+    LocalForage.prototype.driver = function() {
+        return this._driver || null;
+    };
+
+    LocalForage.prototype.ready = function(callback) {
+        var self = this;
+
+        var ready = new Promise(function(resolve, reject) {
+            self._driverSet.then(function() {
+                if (self._ready === null) {
+                    self._ready = self._initStorage(self._config);
+                }
+
+                self._ready.then(resolve, reject);
+            }).catch(reject);
+        });
+
+        ready.then(callback, callback);
+        return ready;
+    };
+
+    LocalForage.prototype.setDriver = function(drivers, callback,
+                                               errorCallback) {
+        var self = this;
+
+        if (typeof drivers === 'string') {
+            drivers = [drivers];
+        }
+
+        this._driverSet = new Promise(function(resolve, reject) {
+            var driverName = self._getFirstSupportedDriver(drivers);
+            var error = new Error('No available storage method found.');
+
+            if (!driverName) {
+                self._driverSet = Promise.reject(error);
+                reject(error);
+                return;
+            }
+
+            self._dbInfo = null;
+            self._ready = null;
+
+            if (isLibraryDriver(driverName)) {
+                // We allow localForage to be declared as a module or as a
+                // library available without AMD/require.js.
+                if (moduleType === ModuleType.DEFINE) {
+                    require([driverName], function(lib) {
+                        self._extend(lib);
+
+                        resolve();
+                    });
+
+                    return;
+                } else if (moduleType === ModuleType.EXPORT) {
+                    // Making it browserify friendly
+                    var driver;
+                    switch (driverName) {
+                        case self.INDEXEDDB:
+                            driver = require('./drivers/indexeddb');
+                            break;
+                        case self.LOCALSTORAGE:
+                            driver = require('./drivers/localstorage');
+                            break;
+                        case self.WEBSQL:
+                            driver = require('./drivers/websql');
+                    }
+
+                    self._extend(driver);
+                } else {
+                    self._extend(globalObject[driverName]);
+                }
+            } else if (CustomDrivers[driverName]) {
+                self._extend(CustomDrivers[driverName]);
+            } else {
+                self._driverSet = Promise.reject(error);
+                reject(error);
+                return;
+            }
+
+            resolve();
+        });
+
+        function setDriverToConfig() {
+            self._config.driver = self.driver();
+        }
+        this._driverSet.then(setDriverToConfig, setDriverToConfig);
+
+        this._driverSet.then(callback, errorCallback);
+        return this._driverSet;
+    };
+
+    LocalForage.prototype.supports = function(driverName) {
+        return !!driverSupport[driverName];
+    };
+
+    LocalForage.prototype._extend = function(libraryMethodsAndProperties) {
+        extend(this, libraryMethodsAndProperties);
+    };
+
+    // Used to determine which driver we should use as the backend for this
+    // instance of localForage.
+    LocalForage.prototype._getFirstSupportedDriver = function(drivers) {
+        if (drivers && isArray(drivers)) {
+            for (var i = 0; i < drivers.length; i++) {
+                var driver = drivers[i];
+
+                if (this.supports(driver)) {
+                    return driver;
+                }
+            }
+        }
+
+        return null;
+    };
+
+    LocalForage.prototype.createInstance = function(options) {
+        return new LocalForage(options);
+    };
+
+    // The actual localForage object that we expose as a module or via a
+    // global. It's extended by pulling in one of our other libraries.
+    var localForage = new LocalForage();
+
+    // We allow localForage to be declared as a module or as a library
+    // available without AMD/require.js.
+    if (moduleType === ModuleType.DEFINE) {
+        define('localforage', function() {
+            return localForage;
+        });
+    } else if (moduleType === ModuleType.EXPORT) {
+        module.exports = localForage;
+    } else {
+        this.localforage = localForage;
+    }
+}).call(window);
+
+},{"./drivers/indexeddb":4,"./drivers/localstorage":5,"./drivers/websql":6,"promise":2}],8:[function(require,module,exports){
+(function() {
+    'use strict';
+
+    // Sadly, the best way to save binary data in WebSQL/localStorage is serializing
+    // it to Base64, so this is how we store it to prevent very strange errors with less
+    // verbose ways of binary <-> string data storage.
+    var BASE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+    var SERIALIZED_MARKER = '__lfsc__:';
+    var SERIALIZED_MARKER_LENGTH = SERIALIZED_MARKER.length;
+
+    // OMG the serializations!
+    var TYPE_ARRAYBUFFER = 'arbf';
+    var TYPE_BLOB = 'blob';
+    var TYPE_INT8ARRAY = 'si08';
+    var TYPE_UINT8ARRAY = 'ui08';
+    var TYPE_UINT8CLAMPEDARRAY = 'uic8';
+    var TYPE_INT16ARRAY = 'si16';
+    var TYPE_INT32ARRAY = 'si32';
+    var TYPE_UINT16ARRAY = 'ur16';
+    var TYPE_UINT32ARRAY = 'ui32';
+    var TYPE_FLOAT32ARRAY = 'fl32';
+    var TYPE_FLOAT64ARRAY = 'fl64';
+    var TYPE_SERIALIZED_MARKER_LENGTH = SERIALIZED_MARKER_LENGTH +
+                                        TYPE_ARRAYBUFFER.length;
+
+    // Serialize a value, afterwards executing a callback (which usually
+    // instructs the `setItem()` callback/promise to be executed). This is how
+    // we store binary data with localStorage.
+    function serialize(value, callback) {
+        var valueString = '';
+        if (value) {
+            valueString = value.toString();
+        }
+
+        // Cannot use `value instanceof ArrayBuffer` or such here, as these
+        // checks fail when running the tests using casper.js...
+        //
+        // TODO: See why those tests fail and use a better solution.
+        if (value && (value.toString() === '[object ArrayBuffer]' ||
+                      value.buffer &&
+                      value.buffer.toString() === '[object ArrayBuffer]')) {
+            // Convert binary arrays to a string and prefix the string with
+            // a special marker.
+            var buffer;
+            var marker = SERIALIZED_MARKER;
+
+            if (value instanceof ArrayBuffer) {
+                buffer = value;
+                marker += TYPE_ARRAYBUFFER;
+            } else {
+                buffer = value.buffer;
+
+                if (valueString === '[object Int8Array]') {
+                    marker += TYPE_INT8ARRAY;
+                } else if (valueString === '[object Uint8Array]') {
+                    marker += TYPE_UINT8ARRAY;
+                } else if (valueString === '[object Uint8ClampedArray]') {
+                    marker += TYPE_UINT8CLAMPEDARRAY;
+                } else if (valueString === '[object Int16Array]') {
+                    marker += TYPE_INT16ARRAY;
+                } else if (valueString === '[object Uint16Array]') {
+                    marker += TYPE_UINT16ARRAY;
+                } else if (valueString === '[object Int32Array]') {
+                    marker += TYPE_INT32ARRAY;
+                } else if (valueString === '[object Uint32Array]') {
+                    marker += TYPE_UINT32ARRAY;
+                } else if (valueString === '[object Float32Array]') {
+                    marker += TYPE_FLOAT32ARRAY;
+                } else if (valueString === '[object Float64Array]') {
+                    marker += TYPE_FLOAT64ARRAY;
+                } else {
+                    callback(new Error('Failed to get type for BinaryArray'));
+                }
+            }
+
+            callback(marker + bufferToString(buffer));
+        } else if (valueString === '[object Blob]') {
+            // Conver the blob to a binaryArray and then to a string.
+            var fileReader = new FileReader();
+
+            fileReader.onload = function() {
+                var str = bufferToString(this.result);
+
+                callback(SERIALIZED_MARKER + TYPE_BLOB + str);
+            };
+
+            fileReader.readAsArrayBuffer(value);
+        } else {
+            try {
+                callback(JSON.stringify(value));
+            } catch (e) {
+                window.console.error("Couldn't convert value into a JSON " +
+                                     'string: ', value);
+
+                callback(null, e);
+            }
+        }
+    }
+
+    // Deserialize data we've inserted into a value column/field. We place
+    // special markers into our strings to mark them as encoded; this isn't
+    // as nice as a meta field, but it's the only sane thing we can do whilst
+    // keeping localStorage support intact.
+    //
+    // Oftentimes this will just deserialize JSON content, but if we have a
+    // special marker (SERIALIZED_MARKER, defined above), we will extract
+    // some kind of arraybuffer/binary data/typed array out of the string.
+    function deserialize(value) {
+        // If we haven't marked this string as being specially serialized (i.e.
+        // something other than serialized JSON), we can just return it and be
+        // done with it.
+        if (value.substring(0,
+            SERIALIZED_MARKER_LENGTH) !== SERIALIZED_MARKER) {
+            return JSON.parse(value);
+        }
+
+        // The following code deals with deserializing some kind of Blob or
+        // TypedArray. First we separate out the type of data we're dealing
+        // with from the data itself.
+        var serializedString = value.substring(TYPE_SERIALIZED_MARKER_LENGTH);
+        var type = value.substring(SERIALIZED_MARKER_LENGTH,
+                                   TYPE_SERIALIZED_MARKER_LENGTH);
+
+        var buffer = stringToBuffer(serializedString);
+
+        // Return the right type based on the code/type set during
+        // serialization.
+        switch (type) {
+            case TYPE_ARRAYBUFFER:
+                return buffer;
+            case TYPE_BLOB:
+                return new Blob([buffer]);
+            case TYPE_INT8ARRAY:
+                return new Int8Array(buffer);
+            case TYPE_UINT8ARRAY:
+                return new Uint8Array(buffer);
+            case TYPE_UINT8CLAMPEDARRAY:
+                return new Uint8ClampedArray(buffer);
+            case TYPE_INT16ARRAY:
+                return new Int16Array(buffer);
+            case TYPE_UINT16ARRAY:
+                return new Uint16Array(buffer);
+            case TYPE_INT32ARRAY:
+                return new Int32Array(buffer);
+            case TYPE_UINT32ARRAY:
+                return new Uint32Array(buffer);
+            case TYPE_FLOAT32ARRAY:
+                return new Float32Array(buffer);
+            case TYPE_FLOAT64ARRAY:
+                return new Float64Array(buffer);
+            default:
+                throw new Error('Unkown type: ' + type);
+        }
+    }
+
+    function stringToBuffer(serializedString) {
+        // Fill the string into a ArrayBuffer.
+        var bufferLength = serializedString.length * 0.75;
+        var len = serializedString.length;
+        var i;
+        var p = 0;
+        var encoded1, encoded2, encoded3, encoded4;
+
+        if (serializedString[serializedString.length - 1] === '=') {
+            bufferLength--;
+            if (serializedString[serializedString.length - 2] === '=') {
+                bufferLength--;
+            }
+        }
+
+        var buffer = new ArrayBuffer(bufferLength);
+        var bytes = new Uint8Array(buffer);
+
+        for (i = 0; i < len; i+=4) {
+            encoded1 = BASE_CHARS.indexOf(serializedString[i]);
+            encoded2 = BASE_CHARS.indexOf(serializedString[i+1]);
+            encoded3 = BASE_CHARS.indexOf(serializedString[i+2]);
+            encoded4 = BASE_CHARS.indexOf(serializedString[i+3]);
+
+            /*jslint bitwise: true */
+            bytes[p++] = (encoded1 << 2) | (encoded2 >> 4);
+            bytes[p++] = ((encoded2 & 15) << 4) | (encoded3 >> 2);
+            bytes[p++] = ((encoded3 & 3) << 6) | (encoded4 & 63);
+        }
+        return buffer;
+    }
+
+    // Converts a buffer to a string to store, serialized, in the backend
+    // storage library.
+    function bufferToString(buffer) {
+        // base64-arraybuffer
+        var bytes = new Uint8Array(buffer);
+        var base64String = '';
+        var i;
+
+        for (i = 0; i < bytes.length; i += 3) {
+            /*jslint bitwise: true */
+            base64String += BASE_CHARS[bytes[i] >> 2];
+            base64String += BASE_CHARS[((bytes[i] & 3) << 4) | (bytes[i + 1] >> 4)];
+            base64String += BASE_CHARS[((bytes[i + 1] & 15) << 2) | (bytes[i + 2] >> 6)];
+            base64String += BASE_CHARS[bytes[i + 2] & 63];
+        }
+
+        if ((bytes.length % 3) === 2) {
+            base64String = base64String.substring(0, base64String.length - 1) + '=';
+        } else if (bytes.length % 3 === 1) {
+            base64String = base64String.substring(0, base64String.length - 2) + '==';
+        }
+
+        return base64String;
+    }
+
+    var localforageSerializer = {
+        serialize: serialize,
+        deserialize: deserialize,
+        stringToBuffer: stringToBuffer,
+        bufferToString: bufferToString
+    };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = localforageSerializer;
+    } else if (typeof define === 'function' && define.amd) {
+        define('localforageSerializer', function() {
+            return localforageSerializer;
+        });
+    } else {
+        this.localforageSerializer = localforageSerializer;
+    }
+}).call(window);
+
+},{}],9:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -25,7 +2249,7 @@ var AutoFocusMixin = {
 
 module.exports = AutoFocusMixin;
 
-},{"./focusNode":119}],2:[function(require,module,exports){
+},{"./focusNode":127}],10:[function(require,module,exports){
 /**
  * Copyright 2013-2015 Facebook, Inc.
  * All rights reserved.
@@ -520,7 +2744,7 @@ var BeforeInputEventPlugin = {
 
 module.exports = BeforeInputEventPlugin;
 
-},{"./EventConstants":14,"./EventPropagators":19,"./ExecutionEnvironment":20,"./FallbackCompositionState":21,"./SyntheticCompositionEvent":93,"./SyntheticInputEvent":97,"./keyOf":141}],3:[function(require,module,exports){
+},{"./EventConstants":22,"./EventPropagators":27,"./ExecutionEnvironment":28,"./FallbackCompositionState":29,"./SyntheticCompositionEvent":101,"./SyntheticInputEvent":105,"./keyOf":149}],11:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -645,7 +2869,7 @@ var CSSProperty = {
 
 module.exports = CSSProperty;
 
-},{}],4:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -827,7 +3051,7 @@ var CSSPropertyOperations = {
 module.exports = CSSPropertyOperations;
 
 }).call(this,require('_process'))
-},{"./CSSProperty":3,"./ExecutionEnvironment":20,"./camelizeStyleName":108,"./dangerousStyleValue":113,"./hyphenateStyleName":133,"./memoizeStringOnly":143,"./warning":154,"_process":156}],5:[function(require,module,exports){
+},{"./CSSProperty":11,"./ExecutionEnvironment":28,"./camelizeStyleName":116,"./dangerousStyleValue":121,"./hyphenateStyleName":141,"./memoizeStringOnly":151,"./warning":162,"_process":164}],13:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -927,7 +3151,7 @@ PooledClass.addPoolingTo(CallbackQueue);
 module.exports = CallbackQueue;
 
 }).call(this,require('_process'))
-},{"./Object.assign":26,"./PooledClass":27,"./invariant":135,"_process":156}],6:[function(require,module,exports){
+},{"./Object.assign":34,"./PooledClass":35,"./invariant":143,"_process":164}],14:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -1309,7 +3533,7 @@ var ChangeEventPlugin = {
 
 module.exports = ChangeEventPlugin;
 
-},{"./EventConstants":14,"./EventPluginHub":16,"./EventPropagators":19,"./ExecutionEnvironment":20,"./ReactUpdates":87,"./SyntheticEvent":95,"./isEventSupported":136,"./isTextInputElement":138,"./keyOf":141}],7:[function(require,module,exports){
+},{"./EventConstants":22,"./EventPluginHub":24,"./EventPropagators":27,"./ExecutionEnvironment":28,"./ReactUpdates":95,"./SyntheticEvent":103,"./isEventSupported":144,"./isTextInputElement":146,"./keyOf":149}],15:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -1334,7 +3558,7 @@ var ClientReactRootIndex = {
 
 module.exports = ClientReactRootIndex;
 
-},{}],8:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -1472,7 +3696,7 @@ var DOMChildrenOperations = {
 module.exports = DOMChildrenOperations;
 
 }).call(this,require('_process'))
-},{"./Danger":11,"./ReactMultiChildUpdateTypes":72,"./invariant":135,"./setTextContent":149,"_process":156}],9:[function(require,module,exports){
+},{"./Danger":19,"./ReactMultiChildUpdateTypes":80,"./invariant":143,"./setTextContent":157,"_process":164}],17:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -1771,7 +3995,7 @@ var DOMProperty = {
 module.exports = DOMProperty;
 
 }).call(this,require('_process'))
-},{"./invariant":135,"_process":156}],10:[function(require,module,exports){
+},{"./invariant":143,"_process":164}],18:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -1963,7 +4187,7 @@ var DOMPropertyOperations = {
 module.exports = DOMPropertyOperations;
 
 }).call(this,require('_process'))
-},{"./DOMProperty":9,"./quoteAttributeValueForBrowser":147,"./warning":154,"_process":156}],11:[function(require,module,exports){
+},{"./DOMProperty":17,"./quoteAttributeValueForBrowser":155,"./warning":162,"_process":164}],19:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -2150,7 +4374,7 @@ var Danger = {
 module.exports = Danger;
 
 }).call(this,require('_process'))
-},{"./ExecutionEnvironment":20,"./createNodesFromMarkup":112,"./emptyFunction":114,"./getMarkupWrap":127,"./invariant":135,"_process":156}],12:[function(require,module,exports){
+},{"./ExecutionEnvironment":28,"./createNodesFromMarkup":120,"./emptyFunction":122,"./getMarkupWrap":135,"./invariant":143,"_process":164}],20:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -2189,7 +4413,7 @@ var DefaultEventPluginOrder = [
 
 module.exports = DefaultEventPluginOrder;
 
-},{"./keyOf":141}],13:[function(require,module,exports){
+},{"./keyOf":149}],21:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -2329,7 +4553,7 @@ var EnterLeaveEventPlugin = {
 
 module.exports = EnterLeaveEventPlugin;
 
-},{"./EventConstants":14,"./EventPropagators":19,"./ReactMount":70,"./SyntheticMouseEvent":99,"./keyOf":141}],14:[function(require,module,exports){
+},{"./EventConstants":22,"./EventPropagators":27,"./ReactMount":78,"./SyntheticMouseEvent":107,"./keyOf":149}],22:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -2401,7 +4625,7 @@ var EventConstants = {
 
 module.exports = EventConstants;
 
-},{"./keyMirror":140}],15:[function(require,module,exports){
+},{"./keyMirror":148}],23:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -2491,7 +4715,7 @@ var EventListener = {
 module.exports = EventListener;
 
 }).call(this,require('_process'))
-},{"./emptyFunction":114,"_process":156}],16:[function(require,module,exports){
+},{"./emptyFunction":122,"_process":164}],24:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -2769,7 +4993,7 @@ var EventPluginHub = {
 module.exports = EventPluginHub;
 
 }).call(this,require('_process'))
-},{"./EventPluginRegistry":17,"./EventPluginUtils":18,"./accumulateInto":105,"./forEachAccumulated":120,"./invariant":135,"_process":156}],17:[function(require,module,exports){
+},{"./EventPluginRegistry":25,"./EventPluginUtils":26,"./accumulateInto":113,"./forEachAccumulated":128,"./invariant":143,"_process":164}],25:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -3049,7 +5273,7 @@ var EventPluginRegistry = {
 module.exports = EventPluginRegistry;
 
 }).call(this,require('_process'))
-},{"./invariant":135,"_process":156}],18:[function(require,module,exports){
+},{"./invariant":143,"_process":164}],26:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -3270,7 +5494,7 @@ var EventPluginUtils = {
 module.exports = EventPluginUtils;
 
 }).call(this,require('_process'))
-},{"./EventConstants":14,"./invariant":135,"_process":156}],19:[function(require,module,exports){
+},{"./EventConstants":22,"./invariant":143,"_process":164}],27:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -3412,7 +5636,7 @@ var EventPropagators = {
 module.exports = EventPropagators;
 
 }).call(this,require('_process'))
-},{"./EventConstants":14,"./EventPluginHub":16,"./accumulateInto":105,"./forEachAccumulated":120,"_process":156}],20:[function(require,module,exports){
+},{"./EventConstants":22,"./EventPluginHub":24,"./accumulateInto":113,"./forEachAccumulated":128,"_process":164}],28:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -3456,7 +5680,7 @@ var ExecutionEnvironment = {
 
 module.exports = ExecutionEnvironment;
 
-},{}],21:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -3547,7 +5771,7 @@ PooledClass.addPoolingTo(FallbackCompositionState);
 
 module.exports = FallbackCompositionState;
 
-},{"./Object.assign":26,"./PooledClass":27,"./getTextContentAccessor":130}],22:[function(require,module,exports){
+},{"./Object.assign":34,"./PooledClass":35,"./getTextContentAccessor":138}],30:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -3758,7 +5982,7 @@ var HTMLDOMPropertyConfig = {
 
 module.exports = HTMLDOMPropertyConfig;
 
-},{"./DOMProperty":9,"./ExecutionEnvironment":20}],23:[function(require,module,exports){
+},{"./DOMProperty":17,"./ExecutionEnvironment":28}],31:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -3914,7 +6138,7 @@ var LinkedValueUtils = {
 module.exports = LinkedValueUtils;
 
 }).call(this,require('_process'))
-},{"./ReactPropTypes":78,"./invariant":135,"_process":156}],24:[function(require,module,exports){
+},{"./ReactPropTypes":86,"./invariant":143,"_process":164}],32:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -3971,7 +6195,7 @@ var LocalEventTrapMixin = {
 module.exports = LocalEventTrapMixin;
 
 }).call(this,require('_process'))
-},{"./ReactBrowserEventEmitter":30,"./accumulateInto":105,"./forEachAccumulated":120,"./invariant":135,"_process":156}],25:[function(require,module,exports){
+},{"./ReactBrowserEventEmitter":38,"./accumulateInto":113,"./forEachAccumulated":128,"./invariant":143,"_process":164}],33:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -4029,7 +6253,7 @@ var MobileSafariClickEventPlugin = {
 
 module.exports = MobileSafariClickEventPlugin;
 
-},{"./EventConstants":14,"./emptyFunction":114}],26:[function(require,module,exports){
+},{"./EventConstants":22,"./emptyFunction":122}],34:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -4078,7 +6302,7 @@ function assign(target, sources) {
 
 module.exports = assign;
 
-},{}],27:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -4194,7 +6418,7 @@ var PooledClass = {
 module.exports = PooledClass;
 
 }).call(this,require('_process'))
-},{"./invariant":135,"_process":156}],28:[function(require,module,exports){
+},{"./invariant":143,"_process":164}],36:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -4346,7 +6570,7 @@ React.version = '0.13.2';
 module.exports = React;
 
 }).call(this,require('_process'))
-},{"./EventPluginUtils":18,"./ExecutionEnvironment":20,"./Object.assign":26,"./ReactChildren":32,"./ReactClass":33,"./ReactComponent":34,"./ReactContext":38,"./ReactCurrentOwner":39,"./ReactDOM":40,"./ReactDOMTextComponent":51,"./ReactDefaultInjection":54,"./ReactElement":57,"./ReactElementValidator":58,"./ReactInstanceHandles":66,"./ReactMount":70,"./ReactPerf":75,"./ReactPropTypes":78,"./ReactReconciler":81,"./ReactServerRendering":84,"./findDOMNode":117,"./onlyChild":144,"_process":156}],29:[function(require,module,exports){
+},{"./EventPluginUtils":26,"./ExecutionEnvironment":28,"./Object.assign":34,"./ReactChildren":40,"./ReactClass":41,"./ReactComponent":42,"./ReactContext":46,"./ReactCurrentOwner":47,"./ReactDOM":48,"./ReactDOMTextComponent":59,"./ReactDefaultInjection":62,"./ReactElement":65,"./ReactElementValidator":66,"./ReactInstanceHandles":74,"./ReactMount":78,"./ReactPerf":83,"./ReactPropTypes":86,"./ReactReconciler":89,"./ReactServerRendering":92,"./findDOMNode":125,"./onlyChild":152,"_process":164}],37:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -4377,7 +6601,7 @@ var ReactBrowserComponentMixin = {
 
 module.exports = ReactBrowserComponentMixin;
 
-},{"./findDOMNode":117}],30:[function(require,module,exports){
+},{"./findDOMNode":125}],38:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -4730,7 +6954,7 @@ var ReactBrowserEventEmitter = assign({}, ReactEventEmitterMixin, {
 
 module.exports = ReactBrowserEventEmitter;
 
-},{"./EventConstants":14,"./EventPluginHub":16,"./EventPluginRegistry":17,"./Object.assign":26,"./ReactEventEmitterMixin":61,"./ViewportMetrics":104,"./isEventSupported":136}],31:[function(require,module,exports){
+},{"./EventConstants":22,"./EventPluginHub":24,"./EventPluginRegistry":25,"./Object.assign":34,"./ReactEventEmitterMixin":69,"./ViewportMetrics":112,"./isEventSupported":144}],39:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -4857,7 +7081,7 @@ var ReactChildReconciler = {
 
 module.exports = ReactChildReconciler;
 
-},{"./ReactReconciler":81,"./flattenChildren":118,"./instantiateReactComponent":134,"./shouldUpdateReactComponent":151}],32:[function(require,module,exports){
+},{"./ReactReconciler":89,"./flattenChildren":126,"./instantiateReactComponent":142,"./shouldUpdateReactComponent":159}],40:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -5010,7 +7234,7 @@ var ReactChildren = {
 module.exports = ReactChildren;
 
 }).call(this,require('_process'))
-},{"./PooledClass":27,"./ReactFragment":63,"./traverseAllChildren":153,"./warning":154,"_process":156}],33:[function(require,module,exports){
+},{"./PooledClass":35,"./ReactFragment":71,"./traverseAllChildren":161,"./warning":162,"_process":164}],41:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -5956,7 +8180,7 @@ var ReactClass = {
 module.exports = ReactClass;
 
 }).call(this,require('_process'))
-},{"./Object.assign":26,"./ReactComponent":34,"./ReactCurrentOwner":39,"./ReactElement":57,"./ReactErrorUtils":60,"./ReactInstanceMap":67,"./ReactLifeCycle":68,"./ReactPropTypeLocationNames":76,"./ReactPropTypeLocations":77,"./ReactUpdateQueue":86,"./invariant":135,"./keyMirror":140,"./keyOf":141,"./warning":154,"_process":156}],34:[function(require,module,exports){
+},{"./Object.assign":34,"./ReactComponent":42,"./ReactCurrentOwner":47,"./ReactElement":65,"./ReactErrorUtils":68,"./ReactInstanceMap":75,"./ReactLifeCycle":76,"./ReactPropTypeLocationNames":84,"./ReactPropTypeLocations":85,"./ReactUpdateQueue":94,"./invariant":143,"./keyMirror":148,"./keyOf":149,"./warning":162,"_process":164}],42:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -6092,7 +8316,7 @@ if ("production" !== process.env.NODE_ENV) {
 module.exports = ReactComponent;
 
 }).call(this,require('_process'))
-},{"./ReactUpdateQueue":86,"./invariant":135,"./warning":154,"_process":156}],35:[function(require,module,exports){
+},{"./ReactUpdateQueue":94,"./invariant":143,"./warning":162,"_process":164}],43:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -6139,7 +8363,7 @@ var ReactComponentBrowserEnvironment = {
 
 module.exports = ReactComponentBrowserEnvironment;
 
-},{"./ReactDOMIDOperations":44,"./ReactMount":70}],36:[function(require,module,exports){
+},{"./ReactDOMIDOperations":52,"./ReactMount":78}],44:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -6200,7 +8424,7 @@ var ReactComponentEnvironment = {
 module.exports = ReactComponentEnvironment;
 
 }).call(this,require('_process'))
-},{"./invariant":135,"_process":156}],37:[function(require,module,exports){
+},{"./invariant":143,"_process":164}],45:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -7098,7 +9322,7 @@ var ReactCompositeComponent = {
 module.exports = ReactCompositeComponent;
 
 }).call(this,require('_process'))
-},{"./Object.assign":26,"./ReactComponentEnvironment":36,"./ReactContext":38,"./ReactCurrentOwner":39,"./ReactElement":57,"./ReactElementValidator":58,"./ReactInstanceMap":67,"./ReactLifeCycle":68,"./ReactNativeComponent":73,"./ReactPerf":75,"./ReactPropTypeLocationNames":76,"./ReactPropTypeLocations":77,"./ReactReconciler":81,"./ReactUpdates":87,"./emptyObject":115,"./invariant":135,"./shouldUpdateReactComponent":151,"./warning":154,"_process":156}],38:[function(require,module,exports){
+},{"./Object.assign":34,"./ReactComponentEnvironment":44,"./ReactContext":46,"./ReactCurrentOwner":47,"./ReactElement":65,"./ReactElementValidator":66,"./ReactInstanceMap":75,"./ReactLifeCycle":76,"./ReactNativeComponent":81,"./ReactPerf":83,"./ReactPropTypeLocationNames":84,"./ReactPropTypeLocations":85,"./ReactReconciler":89,"./ReactUpdates":95,"./emptyObject":123,"./invariant":143,"./shouldUpdateReactComponent":159,"./warning":162,"_process":164}],46:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -7176,7 +9400,7 @@ var ReactContext = {
 module.exports = ReactContext;
 
 }).call(this,require('_process'))
-},{"./Object.assign":26,"./emptyObject":115,"./warning":154,"_process":156}],39:[function(require,module,exports){
+},{"./Object.assign":34,"./emptyObject":123,"./warning":162,"_process":164}],47:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -7210,7 +9434,7 @@ var ReactCurrentOwner = {
 
 module.exports = ReactCurrentOwner;
 
-},{}],40:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -7388,7 +9612,7 @@ var ReactDOM = mapObject({
 module.exports = ReactDOM;
 
 }).call(this,require('_process'))
-},{"./ReactElement":57,"./ReactElementValidator":58,"./mapObject":142,"_process":156}],41:[function(require,module,exports){
+},{"./ReactElement":65,"./ReactElementValidator":66,"./mapObject":150,"_process":164}],49:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -7452,7 +9676,7 @@ var ReactDOMButton = ReactClass.createClass({
 
 module.exports = ReactDOMButton;
 
-},{"./AutoFocusMixin":1,"./ReactBrowserComponentMixin":29,"./ReactClass":33,"./ReactElement":57,"./keyMirror":140}],42:[function(require,module,exports){
+},{"./AutoFocusMixin":9,"./ReactBrowserComponentMixin":37,"./ReactClass":41,"./ReactElement":65,"./keyMirror":148}],50:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -7960,7 +10184,7 @@ ReactDOMComponent.injection = {
 module.exports = ReactDOMComponent;
 
 }).call(this,require('_process'))
-},{"./CSSPropertyOperations":4,"./DOMProperty":9,"./DOMPropertyOperations":10,"./Object.assign":26,"./ReactBrowserEventEmitter":30,"./ReactComponentBrowserEnvironment":35,"./ReactMount":70,"./ReactMultiChild":71,"./ReactPerf":75,"./escapeTextContentForBrowser":116,"./invariant":135,"./isEventSupported":136,"./keyOf":141,"./warning":154,"_process":156}],43:[function(require,module,exports){
+},{"./CSSPropertyOperations":12,"./DOMProperty":17,"./DOMPropertyOperations":18,"./Object.assign":34,"./ReactBrowserEventEmitter":38,"./ReactComponentBrowserEnvironment":43,"./ReactMount":78,"./ReactMultiChild":79,"./ReactPerf":83,"./escapeTextContentForBrowser":124,"./invariant":143,"./isEventSupported":144,"./keyOf":149,"./warning":162,"_process":164}],51:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -8009,7 +10233,7 @@ var ReactDOMForm = ReactClass.createClass({
 
 module.exports = ReactDOMForm;
 
-},{"./EventConstants":14,"./LocalEventTrapMixin":24,"./ReactBrowserComponentMixin":29,"./ReactClass":33,"./ReactElement":57}],44:[function(require,module,exports){
+},{"./EventConstants":22,"./LocalEventTrapMixin":32,"./ReactBrowserComponentMixin":37,"./ReactClass":41,"./ReactElement":65}],52:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -8177,7 +10401,7 @@ ReactPerf.measureMethods(ReactDOMIDOperations, 'ReactDOMIDOperations', {
 module.exports = ReactDOMIDOperations;
 
 }).call(this,require('_process'))
-},{"./CSSPropertyOperations":4,"./DOMChildrenOperations":8,"./DOMPropertyOperations":10,"./ReactMount":70,"./ReactPerf":75,"./invariant":135,"./setInnerHTML":148,"_process":156}],45:[function(require,module,exports){
+},{"./CSSPropertyOperations":12,"./DOMChildrenOperations":16,"./DOMPropertyOperations":18,"./ReactMount":78,"./ReactPerf":83,"./invariant":143,"./setInnerHTML":156,"_process":164}],53:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -8222,7 +10446,7 @@ var ReactDOMIframe = ReactClass.createClass({
 
 module.exports = ReactDOMIframe;
 
-},{"./EventConstants":14,"./LocalEventTrapMixin":24,"./ReactBrowserComponentMixin":29,"./ReactClass":33,"./ReactElement":57}],46:[function(require,module,exports){
+},{"./EventConstants":22,"./LocalEventTrapMixin":32,"./ReactBrowserComponentMixin":37,"./ReactClass":41,"./ReactElement":65}],54:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -8268,7 +10492,7 @@ var ReactDOMImg = ReactClass.createClass({
 
 module.exports = ReactDOMImg;
 
-},{"./EventConstants":14,"./LocalEventTrapMixin":24,"./ReactBrowserComponentMixin":29,"./ReactClass":33,"./ReactElement":57}],47:[function(require,module,exports){
+},{"./EventConstants":22,"./LocalEventTrapMixin":32,"./ReactBrowserComponentMixin":37,"./ReactClass":41,"./ReactElement":65}],55:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -8445,7 +10669,7 @@ var ReactDOMInput = ReactClass.createClass({
 module.exports = ReactDOMInput;
 
 }).call(this,require('_process'))
-},{"./AutoFocusMixin":1,"./DOMPropertyOperations":10,"./LinkedValueUtils":23,"./Object.assign":26,"./ReactBrowserComponentMixin":29,"./ReactClass":33,"./ReactElement":57,"./ReactMount":70,"./ReactUpdates":87,"./invariant":135,"_process":156}],48:[function(require,module,exports){
+},{"./AutoFocusMixin":9,"./DOMPropertyOperations":18,"./LinkedValueUtils":31,"./Object.assign":34,"./ReactBrowserComponentMixin":37,"./ReactClass":41,"./ReactElement":65,"./ReactMount":78,"./ReactUpdates":95,"./invariant":143,"_process":164}],56:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -8497,7 +10721,7 @@ var ReactDOMOption = ReactClass.createClass({
 module.exports = ReactDOMOption;
 
 }).call(this,require('_process'))
-},{"./ReactBrowserComponentMixin":29,"./ReactClass":33,"./ReactElement":57,"./warning":154,"_process":156}],49:[function(require,module,exports){
+},{"./ReactBrowserComponentMixin":37,"./ReactClass":41,"./ReactElement":65,"./warning":162,"_process":164}],57:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -8675,7 +10899,7 @@ var ReactDOMSelect = ReactClass.createClass({
 
 module.exports = ReactDOMSelect;
 
-},{"./AutoFocusMixin":1,"./LinkedValueUtils":23,"./Object.assign":26,"./ReactBrowserComponentMixin":29,"./ReactClass":33,"./ReactElement":57,"./ReactUpdates":87}],50:[function(require,module,exports){
+},{"./AutoFocusMixin":9,"./LinkedValueUtils":31,"./Object.assign":34,"./ReactBrowserComponentMixin":37,"./ReactClass":41,"./ReactElement":65,"./ReactUpdates":95}],58:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -8888,7 +11112,7 @@ var ReactDOMSelection = {
 
 module.exports = ReactDOMSelection;
 
-},{"./ExecutionEnvironment":20,"./getNodeForCharacterOffset":128,"./getTextContentAccessor":130}],51:[function(require,module,exports){
+},{"./ExecutionEnvironment":28,"./getNodeForCharacterOffset":136,"./getTextContentAccessor":138}],59:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -9005,7 +11229,7 @@ assign(ReactDOMTextComponent.prototype, {
 
 module.exports = ReactDOMTextComponent;
 
-},{"./DOMPropertyOperations":10,"./Object.assign":26,"./ReactComponentBrowserEnvironment":35,"./ReactDOMComponent":42,"./escapeTextContentForBrowser":116}],52:[function(require,module,exports){
+},{"./DOMPropertyOperations":18,"./Object.assign":34,"./ReactComponentBrowserEnvironment":43,"./ReactDOMComponent":50,"./escapeTextContentForBrowser":124}],60:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -9145,7 +11369,7 @@ var ReactDOMTextarea = ReactClass.createClass({
 module.exports = ReactDOMTextarea;
 
 }).call(this,require('_process'))
-},{"./AutoFocusMixin":1,"./DOMPropertyOperations":10,"./LinkedValueUtils":23,"./Object.assign":26,"./ReactBrowserComponentMixin":29,"./ReactClass":33,"./ReactElement":57,"./ReactUpdates":87,"./invariant":135,"./warning":154,"_process":156}],53:[function(require,module,exports){
+},{"./AutoFocusMixin":9,"./DOMPropertyOperations":18,"./LinkedValueUtils":31,"./Object.assign":34,"./ReactBrowserComponentMixin":37,"./ReactClass":41,"./ReactElement":65,"./ReactUpdates":95,"./invariant":143,"./warning":162,"_process":164}],61:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -9218,7 +11442,7 @@ var ReactDefaultBatchingStrategy = {
 
 module.exports = ReactDefaultBatchingStrategy;
 
-},{"./Object.assign":26,"./ReactUpdates":87,"./Transaction":103,"./emptyFunction":114}],54:[function(require,module,exports){
+},{"./Object.assign":34,"./ReactUpdates":95,"./Transaction":111,"./emptyFunction":122}],62:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -9377,7 +11601,7 @@ module.exports = {
 };
 
 }).call(this,require('_process'))
-},{"./BeforeInputEventPlugin":2,"./ChangeEventPlugin":6,"./ClientReactRootIndex":7,"./DefaultEventPluginOrder":12,"./EnterLeaveEventPlugin":13,"./ExecutionEnvironment":20,"./HTMLDOMPropertyConfig":22,"./MobileSafariClickEventPlugin":25,"./ReactBrowserComponentMixin":29,"./ReactClass":33,"./ReactComponentBrowserEnvironment":35,"./ReactDOMButton":41,"./ReactDOMComponent":42,"./ReactDOMForm":43,"./ReactDOMIDOperations":44,"./ReactDOMIframe":45,"./ReactDOMImg":46,"./ReactDOMInput":47,"./ReactDOMOption":48,"./ReactDOMSelect":49,"./ReactDOMTextComponent":51,"./ReactDOMTextarea":52,"./ReactDefaultBatchingStrategy":53,"./ReactDefaultPerf":55,"./ReactElement":57,"./ReactEventListener":62,"./ReactInjection":64,"./ReactInstanceHandles":66,"./ReactMount":70,"./ReactReconcileTransaction":80,"./SVGDOMPropertyConfig":88,"./SelectEventPlugin":89,"./ServerReactRootIndex":90,"./SimpleEventPlugin":91,"./createFullPageComponent":111,"_process":156}],55:[function(require,module,exports){
+},{"./BeforeInputEventPlugin":10,"./ChangeEventPlugin":14,"./ClientReactRootIndex":15,"./DefaultEventPluginOrder":20,"./EnterLeaveEventPlugin":21,"./ExecutionEnvironment":28,"./HTMLDOMPropertyConfig":30,"./MobileSafariClickEventPlugin":33,"./ReactBrowserComponentMixin":37,"./ReactClass":41,"./ReactComponentBrowserEnvironment":43,"./ReactDOMButton":49,"./ReactDOMComponent":50,"./ReactDOMForm":51,"./ReactDOMIDOperations":52,"./ReactDOMIframe":53,"./ReactDOMImg":54,"./ReactDOMInput":55,"./ReactDOMOption":56,"./ReactDOMSelect":57,"./ReactDOMTextComponent":59,"./ReactDOMTextarea":60,"./ReactDefaultBatchingStrategy":61,"./ReactDefaultPerf":63,"./ReactElement":65,"./ReactEventListener":70,"./ReactInjection":72,"./ReactInstanceHandles":74,"./ReactMount":78,"./ReactReconcileTransaction":88,"./SVGDOMPropertyConfig":96,"./SelectEventPlugin":97,"./ServerReactRootIndex":98,"./SimpleEventPlugin":99,"./createFullPageComponent":119,"_process":164}],63:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -9643,7 +11867,7 @@ var ReactDefaultPerf = {
 
 module.exports = ReactDefaultPerf;
 
-},{"./DOMProperty":9,"./ReactDefaultPerfAnalysis":56,"./ReactMount":70,"./ReactPerf":75,"./performanceNow":146}],56:[function(require,module,exports){
+},{"./DOMProperty":17,"./ReactDefaultPerfAnalysis":64,"./ReactMount":78,"./ReactPerf":83,"./performanceNow":154}],64:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -9849,7 +12073,7 @@ var ReactDefaultPerfAnalysis = {
 
 module.exports = ReactDefaultPerfAnalysis;
 
-},{"./Object.assign":26}],57:[function(require,module,exports){
+},{"./Object.assign":34}],65:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -10157,7 +12381,7 @@ ReactElement.isValidElement = function(object) {
 module.exports = ReactElement;
 
 }).call(this,require('_process'))
-},{"./Object.assign":26,"./ReactContext":38,"./ReactCurrentOwner":39,"./warning":154,"_process":156}],58:[function(require,module,exports){
+},{"./Object.assign":34,"./ReactContext":46,"./ReactCurrentOwner":47,"./warning":162,"_process":164}],66:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -10622,7 +12846,7 @@ var ReactElementValidator = {
 module.exports = ReactElementValidator;
 
 }).call(this,require('_process'))
-},{"./ReactCurrentOwner":39,"./ReactElement":57,"./ReactFragment":63,"./ReactNativeComponent":73,"./ReactPropTypeLocationNames":76,"./ReactPropTypeLocations":77,"./getIteratorFn":126,"./invariant":135,"./warning":154,"_process":156}],59:[function(require,module,exports){
+},{"./ReactCurrentOwner":47,"./ReactElement":65,"./ReactFragment":71,"./ReactNativeComponent":81,"./ReactPropTypeLocationNames":84,"./ReactPropTypeLocations":85,"./getIteratorFn":134,"./invariant":143,"./warning":162,"_process":164}],67:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -10717,7 +12941,7 @@ var ReactEmptyComponent = {
 module.exports = ReactEmptyComponent;
 
 }).call(this,require('_process'))
-},{"./ReactElement":57,"./ReactInstanceMap":67,"./invariant":135,"_process":156}],60:[function(require,module,exports){
+},{"./ReactElement":65,"./ReactInstanceMap":75,"./invariant":143,"_process":164}],68:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -10749,7 +12973,7 @@ var ReactErrorUtils = {
 
 module.exports = ReactErrorUtils;
 
-},{}],61:[function(require,module,exports){
+},{}],69:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -10799,7 +13023,7 @@ var ReactEventEmitterMixin = {
 
 module.exports = ReactEventEmitterMixin;
 
-},{"./EventPluginHub":16}],62:[function(require,module,exports){
+},{"./EventPluginHub":24}],70:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -10982,7 +13206,7 @@ var ReactEventListener = {
 
 module.exports = ReactEventListener;
 
-},{"./EventListener":15,"./ExecutionEnvironment":20,"./Object.assign":26,"./PooledClass":27,"./ReactInstanceHandles":66,"./ReactMount":70,"./ReactUpdates":87,"./getEventTarget":125,"./getUnboundedScrollPosition":131}],63:[function(require,module,exports){
+},{"./EventListener":23,"./ExecutionEnvironment":28,"./Object.assign":34,"./PooledClass":35,"./ReactInstanceHandles":74,"./ReactMount":78,"./ReactUpdates":95,"./getEventTarget":133,"./getUnboundedScrollPosition":139}],71:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2015, Facebook, Inc.
@@ -11167,7 +13391,7 @@ var ReactFragment = {
 module.exports = ReactFragment;
 
 }).call(this,require('_process'))
-},{"./ReactElement":57,"./warning":154,"_process":156}],64:[function(require,module,exports){
+},{"./ReactElement":65,"./warning":162,"_process":164}],72:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -11209,7 +13433,7 @@ var ReactInjection = {
 
 module.exports = ReactInjection;
 
-},{"./DOMProperty":9,"./EventPluginHub":16,"./ReactBrowserEventEmitter":30,"./ReactClass":33,"./ReactComponentEnvironment":36,"./ReactDOMComponent":42,"./ReactEmptyComponent":59,"./ReactNativeComponent":73,"./ReactPerf":75,"./ReactRootIndex":83,"./ReactUpdates":87}],65:[function(require,module,exports){
+},{"./DOMProperty":17,"./EventPluginHub":24,"./ReactBrowserEventEmitter":38,"./ReactClass":41,"./ReactComponentEnvironment":44,"./ReactDOMComponent":50,"./ReactEmptyComponent":67,"./ReactNativeComponent":81,"./ReactPerf":83,"./ReactRootIndex":91,"./ReactUpdates":95}],73:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -11344,7 +13568,7 @@ var ReactInputSelection = {
 
 module.exports = ReactInputSelection;
 
-},{"./ReactDOMSelection":50,"./containsNode":109,"./focusNode":119,"./getActiveElement":121}],66:[function(require,module,exports){
+},{"./ReactDOMSelection":58,"./containsNode":117,"./focusNode":127,"./getActiveElement":129}],74:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -11680,7 +13904,7 @@ var ReactInstanceHandles = {
 module.exports = ReactInstanceHandles;
 
 }).call(this,require('_process'))
-},{"./ReactRootIndex":83,"./invariant":135,"_process":156}],67:[function(require,module,exports){
+},{"./ReactRootIndex":91,"./invariant":143,"_process":164}],75:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -11729,7 +13953,7 @@ var ReactInstanceMap = {
 
 module.exports = ReactInstanceMap;
 
-},{}],68:[function(require,module,exports){
+},{}],76:[function(require,module,exports){
 /**
  * Copyright 2015, Facebook, Inc.
  * All rights reserved.
@@ -11766,7 +13990,7 @@ var ReactLifeCycle = {
 
 module.exports = ReactLifeCycle;
 
-},{}],69:[function(require,module,exports){
+},{}],77:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -11814,7 +14038,7 @@ var ReactMarkupChecksum = {
 
 module.exports = ReactMarkupChecksum;
 
-},{"./adler32":106}],70:[function(require,module,exports){
+},{"./adler32":114}],78:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -12705,7 +14929,7 @@ ReactPerf.measureMethods(ReactMount, 'ReactMount', {
 module.exports = ReactMount;
 
 }).call(this,require('_process'))
-},{"./DOMProperty":9,"./ReactBrowserEventEmitter":30,"./ReactCurrentOwner":39,"./ReactElement":57,"./ReactElementValidator":58,"./ReactEmptyComponent":59,"./ReactInstanceHandles":66,"./ReactInstanceMap":67,"./ReactMarkupChecksum":69,"./ReactPerf":75,"./ReactReconciler":81,"./ReactUpdateQueue":86,"./ReactUpdates":87,"./containsNode":109,"./emptyObject":115,"./getReactRootElementInContainer":129,"./instantiateReactComponent":134,"./invariant":135,"./setInnerHTML":148,"./shouldUpdateReactComponent":151,"./warning":154,"_process":156}],71:[function(require,module,exports){
+},{"./DOMProperty":17,"./ReactBrowserEventEmitter":38,"./ReactCurrentOwner":47,"./ReactElement":65,"./ReactElementValidator":66,"./ReactEmptyComponent":67,"./ReactInstanceHandles":74,"./ReactInstanceMap":75,"./ReactMarkupChecksum":77,"./ReactPerf":83,"./ReactReconciler":89,"./ReactUpdateQueue":94,"./ReactUpdates":95,"./containsNode":117,"./emptyObject":123,"./getReactRootElementInContainer":137,"./instantiateReactComponent":142,"./invariant":143,"./setInnerHTML":156,"./shouldUpdateReactComponent":159,"./warning":162,"_process":164}],79:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -13135,7 +15359,7 @@ var ReactMultiChild = {
 
 module.exports = ReactMultiChild;
 
-},{"./ReactChildReconciler":31,"./ReactComponentEnvironment":36,"./ReactMultiChildUpdateTypes":72,"./ReactReconciler":81}],72:[function(require,module,exports){
+},{"./ReactChildReconciler":39,"./ReactComponentEnvironment":44,"./ReactMultiChildUpdateTypes":80,"./ReactReconciler":89}],80:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -13168,7 +15392,7 @@ var ReactMultiChildUpdateTypes = keyMirror({
 
 module.exports = ReactMultiChildUpdateTypes;
 
-},{"./keyMirror":140}],73:[function(require,module,exports){
+},{"./keyMirror":148}],81:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -13275,7 +15499,7 @@ var ReactNativeComponent = {
 module.exports = ReactNativeComponent;
 
 }).call(this,require('_process'))
-},{"./Object.assign":26,"./invariant":135,"_process":156}],74:[function(require,module,exports){
+},{"./Object.assign":34,"./invariant":143,"_process":164}],82:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -13387,7 +15611,7 @@ var ReactOwner = {
 module.exports = ReactOwner;
 
 }).call(this,require('_process'))
-},{"./invariant":135,"_process":156}],75:[function(require,module,exports){
+},{"./invariant":143,"_process":164}],83:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -13491,7 +15715,7 @@ function _noMeasure(objName, fnName, func) {
 module.exports = ReactPerf;
 
 }).call(this,require('_process'))
-},{"_process":156}],76:[function(require,module,exports){
+},{"_process":164}],84:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -13519,7 +15743,7 @@ if ("production" !== process.env.NODE_ENV) {
 module.exports = ReactPropTypeLocationNames;
 
 }).call(this,require('_process'))
-},{"_process":156}],77:[function(require,module,exports){
+},{"_process":164}],85:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -13543,7 +15767,7 @@ var ReactPropTypeLocations = keyMirror({
 
 module.exports = ReactPropTypeLocations;
 
-},{"./keyMirror":140}],78:[function(require,module,exports){
+},{"./keyMirror":148}],86:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -13892,7 +16116,7 @@ function getPreciseType(propValue) {
 
 module.exports = ReactPropTypes;
 
-},{"./ReactElement":57,"./ReactFragment":63,"./ReactPropTypeLocationNames":76,"./emptyFunction":114}],79:[function(require,module,exports){
+},{"./ReactElement":65,"./ReactFragment":71,"./ReactPropTypeLocationNames":84,"./emptyFunction":122}],87:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -13948,7 +16172,7 @@ PooledClass.addPoolingTo(ReactPutListenerQueue);
 
 module.exports = ReactPutListenerQueue;
 
-},{"./Object.assign":26,"./PooledClass":27,"./ReactBrowserEventEmitter":30}],80:[function(require,module,exports){
+},{"./Object.assign":34,"./PooledClass":35,"./ReactBrowserEventEmitter":38}],88:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -14124,7 +16348,7 @@ PooledClass.addPoolingTo(ReactReconcileTransaction);
 
 module.exports = ReactReconcileTransaction;
 
-},{"./CallbackQueue":5,"./Object.assign":26,"./PooledClass":27,"./ReactBrowserEventEmitter":30,"./ReactInputSelection":65,"./ReactPutListenerQueue":79,"./Transaction":103}],81:[function(require,module,exports){
+},{"./CallbackQueue":13,"./Object.assign":34,"./PooledClass":35,"./ReactBrowserEventEmitter":38,"./ReactInputSelection":73,"./ReactPutListenerQueue":87,"./Transaction":111}],89:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -14248,7 +16472,7 @@ var ReactReconciler = {
 module.exports = ReactReconciler;
 
 }).call(this,require('_process'))
-},{"./ReactElementValidator":58,"./ReactRef":82,"_process":156}],82:[function(require,module,exports){
+},{"./ReactElementValidator":66,"./ReactRef":90,"_process":164}],90:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -14319,7 +16543,7 @@ ReactRef.detachRefs = function(instance, element) {
 
 module.exports = ReactRef;
 
-},{"./ReactOwner":74}],83:[function(require,module,exports){
+},{"./ReactOwner":82}],91:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -14350,7 +16574,7 @@ var ReactRootIndex = {
 
 module.exports = ReactRootIndex;
 
-},{}],84:[function(require,module,exports){
+},{}],92:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -14432,7 +16656,7 @@ module.exports = {
 };
 
 }).call(this,require('_process'))
-},{"./ReactElement":57,"./ReactInstanceHandles":66,"./ReactMarkupChecksum":69,"./ReactServerRenderingTransaction":85,"./emptyObject":115,"./instantiateReactComponent":134,"./invariant":135,"_process":156}],85:[function(require,module,exports){
+},{"./ReactElement":65,"./ReactInstanceHandles":74,"./ReactMarkupChecksum":77,"./ReactServerRenderingTransaction":93,"./emptyObject":123,"./instantiateReactComponent":142,"./invariant":143,"_process":164}],93:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -14545,7 +16769,7 @@ PooledClass.addPoolingTo(ReactServerRenderingTransaction);
 
 module.exports = ReactServerRenderingTransaction;
 
-},{"./CallbackQueue":5,"./Object.assign":26,"./PooledClass":27,"./ReactPutListenerQueue":79,"./Transaction":103,"./emptyFunction":114}],86:[function(require,module,exports){
+},{"./CallbackQueue":13,"./Object.assign":34,"./PooledClass":35,"./ReactPutListenerQueue":87,"./Transaction":111,"./emptyFunction":122}],94:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2015, Facebook, Inc.
@@ -14844,7 +17068,7 @@ var ReactUpdateQueue = {
 module.exports = ReactUpdateQueue;
 
 }).call(this,require('_process'))
-},{"./Object.assign":26,"./ReactCurrentOwner":39,"./ReactElement":57,"./ReactInstanceMap":67,"./ReactLifeCycle":68,"./ReactUpdates":87,"./invariant":135,"./warning":154,"_process":156}],87:[function(require,module,exports){
+},{"./Object.assign":34,"./ReactCurrentOwner":47,"./ReactElement":65,"./ReactInstanceMap":75,"./ReactLifeCycle":76,"./ReactUpdates":95,"./invariant":143,"./warning":162,"_process":164}],95:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -15126,7 +17350,7 @@ var ReactUpdates = {
 module.exports = ReactUpdates;
 
 }).call(this,require('_process'))
-},{"./CallbackQueue":5,"./Object.assign":26,"./PooledClass":27,"./ReactCurrentOwner":39,"./ReactPerf":75,"./ReactReconciler":81,"./Transaction":103,"./invariant":135,"./warning":154,"_process":156}],88:[function(require,module,exports){
+},{"./CallbackQueue":13,"./Object.assign":34,"./PooledClass":35,"./ReactCurrentOwner":47,"./ReactPerf":83,"./ReactReconciler":89,"./Transaction":111,"./invariant":143,"./warning":162,"_process":164}],96:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -15218,7 +17442,7 @@ var SVGDOMPropertyConfig = {
 
 module.exports = SVGDOMPropertyConfig;
 
-},{"./DOMProperty":9}],89:[function(require,module,exports){
+},{"./DOMProperty":17}],97:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -15413,7 +17637,7 @@ var SelectEventPlugin = {
 
 module.exports = SelectEventPlugin;
 
-},{"./EventConstants":14,"./EventPropagators":19,"./ReactInputSelection":65,"./SyntheticEvent":95,"./getActiveElement":121,"./isTextInputElement":138,"./keyOf":141,"./shallowEqual":150}],90:[function(require,module,exports){
+},{"./EventConstants":22,"./EventPropagators":27,"./ReactInputSelection":73,"./SyntheticEvent":103,"./getActiveElement":129,"./isTextInputElement":146,"./keyOf":149,"./shallowEqual":158}],98:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -15444,7 +17668,7 @@ var ServerReactRootIndex = {
 
 module.exports = ServerReactRootIndex;
 
-},{}],91:[function(require,module,exports){
+},{}],99:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -15872,7 +18096,7 @@ var SimpleEventPlugin = {
 module.exports = SimpleEventPlugin;
 
 }).call(this,require('_process'))
-},{"./EventConstants":14,"./EventPluginUtils":18,"./EventPropagators":19,"./SyntheticClipboardEvent":92,"./SyntheticDragEvent":94,"./SyntheticEvent":95,"./SyntheticFocusEvent":96,"./SyntheticKeyboardEvent":98,"./SyntheticMouseEvent":99,"./SyntheticTouchEvent":100,"./SyntheticUIEvent":101,"./SyntheticWheelEvent":102,"./getEventCharCode":122,"./invariant":135,"./keyOf":141,"./warning":154,"_process":156}],92:[function(require,module,exports){
+},{"./EventConstants":22,"./EventPluginUtils":26,"./EventPropagators":27,"./SyntheticClipboardEvent":100,"./SyntheticDragEvent":102,"./SyntheticEvent":103,"./SyntheticFocusEvent":104,"./SyntheticKeyboardEvent":106,"./SyntheticMouseEvent":107,"./SyntheticTouchEvent":108,"./SyntheticUIEvent":109,"./SyntheticWheelEvent":110,"./getEventCharCode":130,"./invariant":143,"./keyOf":149,"./warning":162,"_process":164}],100:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -15917,7 +18141,7 @@ SyntheticEvent.augmentClass(SyntheticClipboardEvent, ClipboardEventInterface);
 
 module.exports = SyntheticClipboardEvent;
 
-},{"./SyntheticEvent":95}],93:[function(require,module,exports){
+},{"./SyntheticEvent":103}],101:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -15962,7 +18186,7 @@ SyntheticEvent.augmentClass(
 
 module.exports = SyntheticCompositionEvent;
 
-},{"./SyntheticEvent":95}],94:[function(require,module,exports){
+},{"./SyntheticEvent":103}],102:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16001,7 +18225,7 @@ SyntheticMouseEvent.augmentClass(SyntheticDragEvent, DragEventInterface);
 
 module.exports = SyntheticDragEvent;
 
-},{"./SyntheticMouseEvent":99}],95:[function(require,module,exports){
+},{"./SyntheticMouseEvent":107}],103:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16167,7 +18391,7 @@ PooledClass.addPoolingTo(SyntheticEvent, PooledClass.threeArgumentPooler);
 
 module.exports = SyntheticEvent;
 
-},{"./Object.assign":26,"./PooledClass":27,"./emptyFunction":114,"./getEventTarget":125}],96:[function(require,module,exports){
+},{"./Object.assign":34,"./PooledClass":35,"./emptyFunction":122,"./getEventTarget":133}],104:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16206,7 +18430,7 @@ SyntheticUIEvent.augmentClass(SyntheticFocusEvent, FocusEventInterface);
 
 module.exports = SyntheticFocusEvent;
 
-},{"./SyntheticUIEvent":101}],97:[function(require,module,exports){
+},{"./SyntheticUIEvent":109}],105:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16252,7 +18476,7 @@ SyntheticEvent.augmentClass(
 
 module.exports = SyntheticInputEvent;
 
-},{"./SyntheticEvent":95}],98:[function(require,module,exports){
+},{"./SyntheticEvent":103}],106:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16339,7 +18563,7 @@ SyntheticUIEvent.augmentClass(SyntheticKeyboardEvent, KeyboardEventInterface);
 
 module.exports = SyntheticKeyboardEvent;
 
-},{"./SyntheticUIEvent":101,"./getEventCharCode":122,"./getEventKey":123,"./getEventModifierState":124}],99:[function(require,module,exports){
+},{"./SyntheticUIEvent":109,"./getEventCharCode":130,"./getEventKey":131,"./getEventModifierState":132}],107:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16420,7 +18644,7 @@ SyntheticUIEvent.augmentClass(SyntheticMouseEvent, MouseEventInterface);
 
 module.exports = SyntheticMouseEvent;
 
-},{"./SyntheticUIEvent":101,"./ViewportMetrics":104,"./getEventModifierState":124}],100:[function(require,module,exports){
+},{"./SyntheticUIEvent":109,"./ViewportMetrics":112,"./getEventModifierState":132}],108:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16468,7 +18692,7 @@ SyntheticUIEvent.augmentClass(SyntheticTouchEvent, TouchEventInterface);
 
 module.exports = SyntheticTouchEvent;
 
-},{"./SyntheticUIEvent":101,"./getEventModifierState":124}],101:[function(require,module,exports){
+},{"./SyntheticUIEvent":109,"./getEventModifierState":132}],109:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16530,7 +18754,7 @@ SyntheticEvent.augmentClass(SyntheticUIEvent, UIEventInterface);
 
 module.exports = SyntheticUIEvent;
 
-},{"./SyntheticEvent":95,"./getEventTarget":125}],102:[function(require,module,exports){
+},{"./SyntheticEvent":103,"./getEventTarget":133}],110:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16591,7 +18815,7 @@ SyntheticMouseEvent.augmentClass(SyntheticWheelEvent, WheelEventInterface);
 
 module.exports = SyntheticWheelEvent;
 
-},{"./SyntheticMouseEvent":99}],103:[function(require,module,exports){
+},{"./SyntheticMouseEvent":107}],111:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -16832,7 +19056,7 @@ var Transaction = {
 module.exports = Transaction;
 
 }).call(this,require('_process'))
-},{"./invariant":135,"_process":156}],104:[function(require,module,exports){
+},{"./invariant":143,"_process":164}],112:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16861,7 +19085,7 @@ var ViewportMetrics = {
 
 module.exports = ViewportMetrics;
 
-},{}],105:[function(require,module,exports){
+},{}],113:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -16927,7 +19151,7 @@ function accumulateInto(current, next) {
 module.exports = accumulateInto;
 
 }).call(this,require('_process'))
-},{"./invariant":135,"_process":156}],106:[function(require,module,exports){
+},{"./invariant":143,"_process":164}],114:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16961,7 +19185,7 @@ function adler32(data) {
 
 module.exports = adler32;
 
-},{}],107:[function(require,module,exports){
+},{}],115:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -16993,7 +19217,7 @@ function camelize(string) {
 
 module.exports = camelize;
 
-},{}],108:[function(require,module,exports){
+},{}],116:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -17035,7 +19259,7 @@ function camelizeStyleName(string) {
 
 module.exports = camelizeStyleName;
 
-},{"./camelize":107}],109:[function(require,module,exports){
+},{"./camelize":115}],117:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17079,7 +19303,7 @@ function containsNode(outerNode, innerNode) {
 
 module.exports = containsNode;
 
-},{"./isTextNode":139}],110:[function(require,module,exports){
+},{"./isTextNode":147}],118:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17165,7 +19389,7 @@ function createArrayFromMixed(obj) {
 
 module.exports = createArrayFromMixed;
 
-},{"./toArray":152}],111:[function(require,module,exports){
+},{"./toArray":160}],119:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -17227,7 +19451,7 @@ function createFullPageComponent(tag) {
 module.exports = createFullPageComponent;
 
 }).call(this,require('_process'))
-},{"./ReactClass":33,"./ReactElement":57,"./invariant":135,"_process":156}],112:[function(require,module,exports){
+},{"./ReactClass":41,"./ReactElement":65,"./invariant":143,"_process":164}],120:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -17317,7 +19541,7 @@ function createNodesFromMarkup(markup, handleScript) {
 module.exports = createNodesFromMarkup;
 
 }).call(this,require('_process'))
-},{"./ExecutionEnvironment":20,"./createArrayFromMixed":110,"./getMarkupWrap":127,"./invariant":135,"_process":156}],113:[function(require,module,exports){
+},{"./ExecutionEnvironment":28,"./createArrayFromMixed":118,"./getMarkupWrap":135,"./invariant":143,"_process":164}],121:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17375,7 +19599,7 @@ function dangerousStyleValue(name, value) {
 
 module.exports = dangerousStyleValue;
 
-},{"./CSSProperty":3}],114:[function(require,module,exports){
+},{"./CSSProperty":11}],122:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17409,7 +19633,7 @@ emptyFunction.thatReturnsArgument = function(arg) { return arg; };
 
 module.exports = emptyFunction;
 
-},{}],115:[function(require,module,exports){
+},{}],123:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -17433,7 +19657,7 @@ if ("production" !== process.env.NODE_ENV) {
 module.exports = emptyObject;
 
 }).call(this,require('_process'))
-},{"_process":156}],116:[function(require,module,exports){
+},{"_process":164}],124:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17473,7 +19697,7 @@ function escapeTextContentForBrowser(text) {
 
 module.exports = escapeTextContentForBrowser;
 
-},{}],117:[function(require,module,exports){
+},{}],125:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -17546,7 +19770,7 @@ function findDOMNode(componentOrElement) {
 module.exports = findDOMNode;
 
 }).call(this,require('_process'))
-},{"./ReactCurrentOwner":39,"./ReactInstanceMap":67,"./ReactMount":70,"./invariant":135,"./isNode":137,"./warning":154,"_process":156}],118:[function(require,module,exports){
+},{"./ReactCurrentOwner":47,"./ReactInstanceMap":75,"./ReactMount":78,"./invariant":143,"./isNode":145,"./warning":162,"_process":164}],126:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -17604,7 +19828,7 @@ function flattenChildren(children) {
 module.exports = flattenChildren;
 
 }).call(this,require('_process'))
-},{"./traverseAllChildren":153,"./warning":154,"_process":156}],119:[function(require,module,exports){
+},{"./traverseAllChildren":161,"./warning":162,"_process":164}],127:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -17633,7 +19857,7 @@ function focusNode(node) {
 
 module.exports = focusNode;
 
-},{}],120:[function(require,module,exports){
+},{}],128:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17664,7 +19888,7 @@ var forEachAccumulated = function(arr, cb, scope) {
 
 module.exports = forEachAccumulated;
 
-},{}],121:[function(require,module,exports){
+},{}],129:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17693,7 +19917,7 @@ function getActiveElement() /*?DOMElement*/ {
 
 module.exports = getActiveElement;
 
-},{}],122:[function(require,module,exports){
+},{}],130:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17745,7 +19969,7 @@ function getEventCharCode(nativeEvent) {
 
 module.exports = getEventCharCode;
 
-},{}],123:[function(require,module,exports){
+},{}],131:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17850,7 +20074,7 @@ function getEventKey(nativeEvent) {
 
 module.exports = getEventKey;
 
-},{"./getEventCharCode":122}],124:[function(require,module,exports){
+},{"./getEventCharCode":130}],132:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17897,7 +20121,7 @@ function getEventModifierState(nativeEvent) {
 
 module.exports = getEventModifierState;
 
-},{}],125:[function(require,module,exports){
+},{}],133:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17928,7 +20152,7 @@ function getEventTarget(nativeEvent) {
 
 module.exports = getEventTarget;
 
-},{}],126:[function(require,module,exports){
+},{}],134:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -17972,7 +20196,7 @@ function getIteratorFn(maybeIterable) {
 
 module.exports = getIteratorFn;
 
-},{}],127:[function(require,module,exports){
+},{}],135:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -18089,7 +20313,7 @@ function getMarkupWrap(nodeName) {
 module.exports = getMarkupWrap;
 
 }).call(this,require('_process'))
-},{"./ExecutionEnvironment":20,"./invariant":135,"_process":156}],128:[function(require,module,exports){
+},{"./ExecutionEnvironment":28,"./invariant":143,"_process":164}],136:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18164,7 +20388,7 @@ function getNodeForCharacterOffset(root, offset) {
 
 module.exports = getNodeForCharacterOffset;
 
-},{}],129:[function(require,module,exports){
+},{}],137:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18199,7 +20423,7 @@ function getReactRootElementInContainer(container) {
 
 module.exports = getReactRootElementInContainer;
 
-},{}],130:[function(require,module,exports){
+},{}],138:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18236,7 +20460,7 @@ function getTextContentAccessor() {
 
 module.exports = getTextContentAccessor;
 
-},{"./ExecutionEnvironment":20}],131:[function(require,module,exports){
+},{"./ExecutionEnvironment":28}],139:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18276,7 +20500,7 @@ function getUnboundedScrollPosition(scrollable) {
 
 module.exports = getUnboundedScrollPosition;
 
-},{}],132:[function(require,module,exports){
+},{}],140:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18309,7 +20533,7 @@ function hyphenate(string) {
 
 module.exports = hyphenate;
 
-},{}],133:[function(require,module,exports){
+},{}],141:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18350,7 +20574,7 @@ function hyphenateStyleName(string) {
 
 module.exports = hyphenateStyleName;
 
-},{"./hyphenate":132}],134:[function(require,module,exports){
+},{"./hyphenate":140}],142:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -18488,7 +20712,7 @@ function instantiateReactComponent(node, parentCompositeType) {
 module.exports = instantiateReactComponent;
 
 }).call(this,require('_process'))
-},{"./Object.assign":26,"./ReactCompositeComponent":37,"./ReactEmptyComponent":59,"./ReactNativeComponent":73,"./invariant":135,"./warning":154,"_process":156}],135:[function(require,module,exports){
+},{"./Object.assign":34,"./ReactCompositeComponent":45,"./ReactEmptyComponent":67,"./ReactNativeComponent":81,"./invariant":143,"./warning":162,"_process":164}],143:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -18545,7 +20769,7 @@ var invariant = function(condition, format, a, b, c, d, e, f) {
 module.exports = invariant;
 
 }).call(this,require('_process'))
-},{"_process":156}],136:[function(require,module,exports){
+},{"_process":164}],144:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18610,7 +20834,7 @@ function isEventSupported(eventNameSuffix, capture) {
 
 module.exports = isEventSupported;
 
-},{"./ExecutionEnvironment":20}],137:[function(require,module,exports){
+},{"./ExecutionEnvironment":28}],145:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18637,7 +20861,7 @@ function isNode(object) {
 
 module.exports = isNode;
 
-},{}],138:[function(require,module,exports){
+},{}],146:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18680,7 +20904,7 @@ function isTextInputElement(elem) {
 
 module.exports = isTextInputElement;
 
-},{}],139:[function(require,module,exports){
+},{}],147:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18705,7 +20929,7 @@ function isTextNode(object) {
 
 module.exports = isTextNode;
 
-},{"./isNode":137}],140:[function(require,module,exports){
+},{"./isNode":145}],148:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -18760,7 +20984,7 @@ var keyMirror = function(obj) {
 module.exports = keyMirror;
 
 }).call(this,require('_process'))
-},{"./invariant":135,"_process":156}],141:[function(require,module,exports){
+},{"./invariant":143,"_process":164}],149:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18796,7 +21020,7 @@ var keyOf = function(oneKeyObj) {
 
 module.exports = keyOf;
 
-},{}],142:[function(require,module,exports){
+},{}],150:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18849,7 +21073,7 @@ function mapObject(object, callback, context) {
 
 module.exports = mapObject;
 
-},{}],143:[function(require,module,exports){
+},{}],151:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18882,7 +21106,7 @@ function memoizeStringOnly(callback) {
 
 module.exports = memoizeStringOnly;
 
-},{}],144:[function(require,module,exports){
+},{}],152:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -18922,7 +21146,7 @@ function onlyChild(children) {
 module.exports = onlyChild;
 
 }).call(this,require('_process'))
-},{"./ReactElement":57,"./invariant":135,"_process":156}],145:[function(require,module,exports){
+},{"./ReactElement":65,"./invariant":143,"_process":164}],153:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18950,7 +21174,7 @@ if (ExecutionEnvironment.canUseDOM) {
 
 module.exports = performance || {};
 
-},{"./ExecutionEnvironment":20}],146:[function(require,module,exports){
+},{"./ExecutionEnvironment":28}],154:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -18978,7 +21202,7 @@ var performanceNow = performance.now.bind(performance);
 
 module.exports = performanceNow;
 
-},{"./performance":145}],147:[function(require,module,exports){
+},{"./performance":153}],155:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -19006,7 +21230,7 @@ function quoteAttributeValueForBrowser(value) {
 
 module.exports = quoteAttributeValueForBrowser;
 
-},{"./escapeTextContentForBrowser":116}],148:[function(require,module,exports){
+},{"./escapeTextContentForBrowser":124}],156:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -19095,7 +21319,7 @@ if (ExecutionEnvironment.canUseDOM) {
 
 module.exports = setInnerHTML;
 
-},{"./ExecutionEnvironment":20}],149:[function(require,module,exports){
+},{"./ExecutionEnvironment":28}],157:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -19137,7 +21361,7 @@ if (ExecutionEnvironment.canUseDOM) {
 
 module.exports = setTextContent;
 
-},{"./ExecutionEnvironment":20,"./escapeTextContentForBrowser":116,"./setInnerHTML":148}],150:[function(require,module,exports){
+},{"./ExecutionEnvironment":28,"./escapeTextContentForBrowser":124,"./setInnerHTML":156}],158:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -19181,7 +21405,7 @@ function shallowEqual(objA, objB) {
 
 module.exports = shallowEqual;
 
-},{}],151:[function(require,module,exports){
+},{}],159:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -19285,7 +21509,7 @@ function shouldUpdateReactComponent(prevElement, nextElement) {
 module.exports = shouldUpdateReactComponent;
 
 }).call(this,require('_process'))
-},{"./warning":154,"_process":156}],152:[function(require,module,exports){
+},{"./warning":162,"_process":164}],160:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -19357,7 +21581,7 @@ function toArray(obj) {
 module.exports = toArray;
 
 }).call(this,require('_process'))
-},{"./invariant":135,"_process":156}],153:[function(require,module,exports){
+},{"./invariant":143,"_process":164}],161:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -19610,7 +21834,7 @@ function traverseAllChildren(children, callback, traverseContext) {
 module.exports = traverseAllChildren;
 
 }).call(this,require('_process'))
-},{"./ReactElement":57,"./ReactFragment":63,"./ReactInstanceHandles":66,"./getIteratorFn":126,"./invariant":135,"./warning":154,"_process":156}],154:[function(require,module,exports){
+},{"./ReactElement":65,"./ReactFragment":71,"./ReactInstanceHandles":74,"./getIteratorFn":134,"./invariant":143,"./warning":162,"_process":164}],162:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -19673,10 +21897,10 @@ if ("production" !== process.env.NODE_ENV) {
 module.exports = warning;
 
 }).call(this,require('_process'))
-},{"./emptyFunction":114,"_process":156}],155:[function(require,module,exports){
+},{"./emptyFunction":122,"_process":164}],163:[function(require,module,exports){
 module.exports = require('./lib/React');
 
-},{"./lib/React":28}],156:[function(require,module,exports){
+},{"./lib/React":36}],164:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -19768,7 +21992,47 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],157:[function(require,module,exports){
+},{}],165:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, '__esModule', {
+  value: true
+});
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+var _localforage = require('localforage');
+
+var _localforage2 = _interopRequireDefault(_localforage);
+
+var appName = 'betsson-ext';
+
+function formatKey(val) {
+  return '' + appName + '-' + val;
+}
+
+var keys = {
+  LAST_UPDATE: formatKey('lastUpd'),
+  GAMES: formatKey('games')
+};
+
+var db = {
+  updateGames: function updateGames(games, cb) {
+    var data = {};
+    data[keys.GAMES] = games;
+    chrome.storage.local.set(data, cb);
+  },
+  getGames: function getGames(cb) {
+    chrome.storage.local.get(keys.GAMES, function (data) {
+      cb(data[keys.GAMES]);
+    });
+  }
+};
+
+exports['default'] = db;
+module.exports = exports['default'];
+
+},{"localforage":7}],166:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, '__esModule', {
@@ -19781,70 +22045,45 @@ var _react = require('react');
 
 var _react2 = _interopRequireDefault(_react);
 
+var _TeamsOddsViewJsx = require('./TeamsOddsView.jsx');
+
+var _TeamsOddsViewJsx2 = _interopRequireDefault(_TeamsOddsViewJsx);
+
 var EventView = _react2['default'].createClass({
   displayName: 'EventView',
 
   render: function render() {
-    var event = this.props;
-    var ths = event.teamsOdds.map(function (item, i) {
+    var events = this.props.events.map(function (event, i) {
       return _react2['default'].createElement(
-        'th',
-        null,
-        item.team
-      );
-    });
-    var tds = event.teamsOdds.map(function (item, i) {
-      return _react2['default'].createElement(
-        'td',
-        null,
-        item.odds
+        'div',
+        { className: 'event', key: i },
+        _react2['default'].createElement(
+          'div',
+          null,
+          event.categoryName
+        ),
+        _react2['default'].createElement(
+          'div',
+          null,
+          event.name,
+          ' ',
+          event.periodName
+        ),
+        _react2['default'].createElement(
+          'div',
+          null,
+          event.subCategoryName,
+          ' ',
+          event.gameResults
+        ),
+        _react2['default'].createElement(_TeamsOddsViewJsx2['default'], { teamsOdds: event.teamsOdds })
       );
     });
 
     return _react2['default'].createElement(
       'div',
-      { className: 'event' },
-      _react2['default'].createElement(
-        'div',
-        null,
-        event.categoryName
-      ),
-      _react2['default'].createElement(
-        'div',
-        null,
-        event.name,
-        ' ',
-        event.periodName
-      ),
-      _react2['default'].createElement(
-        'div',
-        null,
-        event.subCategoryName,
-        ' ',
-        event.gameResults
-      ),
-      _react2['default'].createElement(
-        'table',
-        null,
-        _react2['default'].createElement(
-          'thead',
-          null,
-          _react2['default'].createElement(
-            'tr',
-            null,
-            ths
-          )
-        ),
-        _react2['default'].createElement(
-          'tbody',
-          null,
-          _react2['default'].createElement(
-            'tr',
-            null,
-            tds
-          )
-        )
-      )
+      null,
+      events
     );
   }
 });
@@ -19852,14 +22091,12 @@ var EventView = _react2['default'].createClass({
 exports['default'] = EventView;
 module.exports = exports['default'];
 
-},{"react":155}],158:[function(require,module,exports){
+},{"./TeamsOddsView.jsx":168,"react":163}],167:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, '__esModule', {
   value: true
 });
-
-var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
 
@@ -19871,38 +22108,42 @@ var _EventViewJsx = require('./EventView.jsx');
 
 var _EventViewJsx2 = _interopRequireDefault(_EventViewJsx);
 
+var _backgroundDb = require('../background/db');
+
+var _backgroundDb2 = _interopRequireDefault(_backgroundDb);
+
 var Main = _react2['default'].createClass({
   displayName: 'Main',
 
-  getDefaultProps: function getDefaultProps() {
+  getInitialState: function getInitialState() {
     return {
-      events: [{
-        categoryName: 'futbol',
-        name: 'Sporting Cristal - Unión Comercio',
-        periodName: '1er tiempo',
-        subCategoryName: 'Peru Primera División Apertura',
-        gameResults: '0-0',
-        teamsOdds: [{ team: 'Sporting Cristal', odds: '1.52' }, { team: 'Empate', odds: '2.38' }, { team: 'Unión Comercio', odds: '5.3' }]
-      }, {
-        categoryName: 'futbol',
-        name: 'A - B',
-        periodName: '1er tiempo',
-        subCategoryName: 'Peru Primera División Apertura',
-        gameResults: '0-0',
-        teamsOdds: [{ team: 'A', odds: '1.52' }, { team: 'Empate', odds: '2.38' }, { team: 'B', odds: '5.3' }]
-      }]
+      liveEvents: []
     };
   },
 
+  update: function update() {},
+
+  componentDidMount: function componentDidMount() {},
+
   render: function render() {
-    var events = this.props.events.map(function (item, i) {
-      return _react2['default'].createElement(_EventViewJsx2['default'], _extends({ key: i }, item));
+    debugger;
+    var liveEvents = this.props.liveEvents.map(function (item, i) {
+      return _react2['default'].createElement(
+        'div',
+        { key: i },
+        _react2['default'].createElement(
+          'h1',
+          null,
+          item.name
+        ),
+        _react2['default'].createElement(_EventViewJsx2['default'], { events: item.events })
+      );
     });
 
     return _react2['default'].createElement(
       'div',
       null,
-      events
+      liveEvents
     );
   }
 
@@ -19911,7 +22152,78 @@ var Main = _react2['default'].createClass({
 exports['default'] = Main;
 module.exports = exports['default'];
 
-},{"./EventView.jsx":157,"react":155}],159:[function(require,module,exports){
+/*db.getGames(data => {
+  console.log('aca');
+  let dataParse = JSON.parse(data);
+  console.log('dataParse', dataParse);
+  this.setState({liveEvents: dataParse});
+})*/
+
+//this.update();
+
+},{"../background/db":165,"./EventView.jsx":166,"react":163}],168:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, '__esModule', {
+  value: true
+});
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+var TeamsOddsView = _react2['default'].createClass({
+  displayName: 'TeamsOddsView',
+
+  render: function render() {
+
+    var ths = this.props.teamsOdds.map(function (item, i) {
+      return _react2['default'].createElement(
+        'th',
+        { key: i },
+        item.team
+      );
+    });
+
+    var tds = this.props.teamsOdds.map(function (item, i) {
+      return _react2['default'].createElement(
+        'td',
+        { key: i },
+        item.odds
+      );
+    });
+
+    return _react2['default'].createElement(
+      'table',
+      null,
+      _react2['default'].createElement(
+        'thead',
+        null,
+        _react2['default'].createElement(
+          'tr',
+          null,
+          ths
+        )
+      ),
+      _react2['default'].createElement(
+        'tbody',
+        null,
+        _react2['default'].createElement(
+          'tr',
+          null,
+          tds
+        )
+      )
+    );
+  }
+});
+
+exports['default'] = TeamsOddsView;
+module.exports = exports['default'];
+
+},{"react":163}],169:[function(require,module,exports){
 'use strict';
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
@@ -19924,6 +22236,12 @@ var _MainJsx = require('./Main.jsx');
 
 var _MainJsx2 = _interopRequireDefault(_MainJsx);
 
-_react2['default'].render(_react2['default'].createElement(_MainJsx2['default'], null), document.getElementById('app'));
+var _backgroundDb = require('../background/db');
 
-},{"./Main.jsx":158,"react":155}]},{},[159]);
+var _backgroundDb2 = _interopRequireDefault(_backgroundDb);
+
+_backgroundDb2['default'].getGames(function (liveEvents) {
+  _react2['default'].render(_react2['default'].createElement(_MainJsx2['default'], { liveEvents: liveEvents }), document.getElementById('app'));
+});
+
+},{"../background/db":165,"./Main.jsx":167,"react":163}]},{},[169]);
