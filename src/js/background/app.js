@@ -1,6 +1,7 @@
 import httpRequest from './httpRequest';
 import chromeNotification from './chromeNotification';
 import db from './db';
+import alarm from './alarm';
 
 const url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/' +
   'PlayableMarketServicesV2.svc/jsonp/FetchLiveEventsMatchWinnerJSONP' +
@@ -46,6 +47,11 @@ function parseData(data) {
   });
 }
 
-httpRequest.send(url, (response) => {
-  parseData(JSON.parse(response));
-});
+function getEvents() {
+  httpRequest.send(url, (response) => {
+    parseData(JSON.parse(response));
+  });
+}
+
+alarm.create('gg', {when: Date.now() + 1000, periodInMinutes: 1},
+             getEvents);

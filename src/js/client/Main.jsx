@@ -5,29 +5,31 @@ import db from '../background/db';
 let Main = React.createClass({
   getInitialState: function() {
     return {
-      liveEvents: []
+      liveEvents: [],
+      time: ''
     };
   },
 
   update() {
-    /*db.getGames(data => {
+    db.getGames(data => {
       console.log('aca');
-      let dataParse = JSON.parse(data);
-      console.log('dataParse', dataParse);
-      this.setState({liveEvents: dataParse});
-    })*/
+      this.setState({
+        liveEvents: data.games,
+        time: data.time
+      });
+    })
   },
 
   componentDidMount() {
-    //this.update();
+    this.update();
   },
 
   render() {
     debugger;
-    let liveEvents = this.props.liveEvents.map((item, i) => {
+    let liveEvents = this.state.liveEvents.map((item, i) => {
       return (
         <div key = {i}>
-          <h1>{item.name}</h1>
+          <h2>{item.name}</h2>
           <EventView events = {item.events} />          
         </div>
       )
@@ -35,6 +37,7 @@ let Main = React.createClass({
 
     return (
       <div>
+        <h1>{this.state.time}</h1>
         {liveEvents}
       </div>
     );

@@ -9,7 +9,8 @@
   "permissions": [
     "storage",
     "https://ajax.googleapis.com/",
-    "https://sbfacade.bpsgameserver.com/"
+    "https://sbfacade.bpsgameserver.com/",
+    "alarms"
   ],
   "background": {
     "scripts": ["js/background-bundle.js"]
