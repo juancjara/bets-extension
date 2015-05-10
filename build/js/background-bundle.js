@@ -5448,7 +5448,7 @@ function parseData(data) {
           gameResults = game.GameResults[0].GameResultValue + '-' + game.GameResults[1].GameResultValue;
         }
         var teamsOdds = [{ team: 'no', odds: 'hay' }];
-        if (game.MarketGroups) {
+        if (game.MarketGroups && game.MarketGroups[0] && game.MarketGroups[0].Markets) {
           teamsOdds = game.MarketGroups[0].Markets[0].MarketSelections.map(function (item) {
             return {
               team: item.MarketSelectionName,

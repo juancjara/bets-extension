@@ -21,7 +21,8 @@ function parseData(data) {
                          '-' + game.GameResults[1].GameResultValue;
         }
         let teamsOdds = [{team: 'no', odds: 'hay'}];
-        if (game.MarketGroups) {
+        if (game.MarketGroups && game.MarketGroups[0] && 
+            game.MarketGroups[0].Markets) {
           teamsOdds = game.MarketGroups[0].Markets[0]
                         .MarketSelections.map(item => { 
                           return {
