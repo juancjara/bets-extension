@@ -9,6 +9,7 @@ const url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/' +
 
 
 function parseData(data) {
+  console.log('parsing');
   let liveEvents = data.FetchLiveEventsMatchWinnerJSONPResult
                     .OngoingEvents;
   let niceData = liveEvents.map(ev => {
@@ -16,7 +17,8 @@ function parseData(data) {
       name: ev.name,
       events: ev.events.map(game => {
         let gameResults = 'Not yet';
-        if (game.GameResults) {
+        if (game.GameResults && game.GameResults[0] &&
+            game.GameResults[1].GameResultValue ) {
           gameResults = game.GameResults[0].GameResultValue +
                          '-' + game.GameResults[1].GameResultValue;
         }
@@ -54,5 +56,20 @@ function getEvents() {
   });
 }
 
-alarm.create('gg', {when: Date.now() + 1000, periodInMinutes: 1},
-             getEvents);
+function cleanSkipped() {
+  console.log('cleaned');
+  /*db.clean(data => {
+    console.log('cleanSkipped', data);
+  }) */
+}
+console.log('lel123');
+
+db.addSkipped(234343, () => {
+  alarm.clearAll(()=> {
+    alarm.create('fetchEvents', {when: Date.now() + 1000, periodInMinutes: 1},
+           getEvents);  
+    alarm.create('cleanSkip', {when: Date.now() + 2000, periodInMinutes: 360},
+               cleanSkipped);
+    alarm.listen();
+  })
+})

@@ -5405,9 +5405,20 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 var alarm = {
-  create: function create(name, alarmInfo, cb) {
-    chrome.alarms.create(name, alarmInfo);
-    chrome.alarms.onAlarm.addListener(cb);
+  actions: {},
+  create: function create(name, alarmInfo, fn) {
+    chrome.alarms.clear(name, function () {
+      chrome.alarms.create(name, alarmInfo);
+      alarm.actions[name] = fn;
+    });
+  },
+  listen: function listen() {
+    chrome.alarms.onAlarm.addListener(function (elem) {
+      alarm.actions[elem.name]();
+    });
+  },
+  clearAll: function clearAll(done) {
+    chrome.alarms.clearAll(done);
   }
 };
 
@@ -5438,13 +5449,14 @@ var _alarm2 = _interopRequireDefault(_alarm);
 var url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/' + 'PlayableMarketServicesV2.svc/jsonp/FetchLiveEventsMatchWinnerJSONP' + '?unique=2_33_1&segmentID=613&languageCode=pe';
 
 function parseData(data) {
+  console.log('parsing');
   var liveEvents = data.FetchLiveEventsMatchWinnerJSONPResult.OngoingEvents;
   var niceData = liveEvents.map(function (ev) {
     return {
       name: ev.name,
       events: ev.events.map(function (game) {
         var gameResults = 'Not yet';
-        if (game.GameResults) {
+        if (game.GameResults && game.GameResults[0] && game.GameResults[1].GameResultValue) {
           gameResults = game.GameResults[0].GameResultValue + '-' + game.GameResults[1].GameResultValue;
         }
         var teamsOdds = [{ team: 'no', odds: 'hay' }];
@@ -5479,7 +5491,21 @@ function getEvents() {
   });
 }
 
-_alarm2['default'].create('gg', { when: Date.now() + 1000, periodInMinutes: 1 }, getEvents);
+function cleanSkipped() {
+  console.log('cleaned');
+  /*db.clean(data => {
+    console.log('cleanSkipped', data);
+  }) */
+}
+console.log('lel123');
+
+_db2['default'].addSkipped(234343, function () {
+  _alarm2['default'].clearAll(function () {
+    _alarm2['default'].create('fetchEvents', { when: Date.now() + 1000, periodInMinutes: 1 }, getEvents);
+    _alarm2['default'].create('cleanSkip', { when: Date.now() + 2000, periodInMinutes: 360 }, cleanSkipped);
+    _alarm2['default'].listen();
+  });
+});
 
 },{"./alarm":11,"./chromeNotification":13,"./db":14,"./httpRequest":15}],13:[function(require,module,exports){
 'use strict';
@@ -5520,7 +5546,9 @@ function formatKey(val) {
 }
 
 var keys = {
-  LAST_UPDATE: formatKey('lastUpd') };
+  LAST_UPDATE: formatKey('lastUpd'),
+  SKIPPED: formatKey('skipped')
+};
 
 var db = {
   updateGames: function updateGames(games, cb) {
@@ -5529,15 +5557,33 @@ var db = {
       games: games,
       time: _moment2['default']().format('MMMM Do YYYY, h:mm:ss a')
     };
-
     chrome.storage.local.set(data, cb);
   },
-  getGames: function getGames(cb) {
-    chrome.storage.local.get(keys.LAST_UPDATE, function (data) {
-      cb(data[keys.LAST_UPDATE]);
+  addSkipped: function addSkipped(id, cb) {
+    db.getData(keys.SKIPPED, function () {
+      var data = arguments[0] === undefined ? {} : arguments[0];
+
+      data[id] = new Date().getTime();
+      console.log('added', data);
+      chrome.storage.local.set(data, cb);
     });
+  },
+  getGames: function getGames(cb) {
+    db.getData(keys.LAST_UPDATE, cb);
+  },
+  getData: function getData(key, cb) {
+    chrome.storage.local.get(key, cb);
   }
 };
+
+/*,
+  getGames(cb) {
+    //db.getData(keys.LAST_UPDATE, cb);
+  },
+  clean(cb) {
+    //db.getData(keys.SKIPPED, cb);
+  }
+*/
 
 exports['default'] = db;
 module.exports = exports['default'];

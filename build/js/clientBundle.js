@@ -25100,7 +25100,9 @@ function formatKey(val) {
 }
 
 var keys = {
-  LAST_UPDATE: formatKey('lastUpd') };
+  LAST_UPDATE: formatKey('lastUpd'),
+  SKIPPED: formatKey('skipped')
+};
 
 var db = {
   updateGames: function updateGames(games, cb) {
@@ -25109,15 +25111,33 @@ var db = {
       games: games,
       time: _moment2['default']().format('MMMM Do YYYY, h:mm:ss a')
     };
-
     chrome.storage.local.set(data, cb);
   },
-  getGames: function getGames(cb) {
-    chrome.storage.local.get(keys.LAST_UPDATE, function (data) {
-      cb(data[keys.LAST_UPDATE]);
+  addSkipped: function addSkipped(id, cb) {
+    db.getData(keys.SKIPPED, function () {
+      var data = arguments[0] === undefined ? {} : arguments[0];
+
+      data[id] = new Date().getTime();
+      console.log('added', data);
+      chrome.storage.local.set(data, cb);
     });
+  },
+  getGames: function getGames(cb) {
+    db.getData(keys.LAST_UPDATE, cb);
+  },
+  getData: function getData(key, cb) {
+    chrome.storage.local.get(key, cb);
   }
 };
+
+/*,
+  getGames(cb) {
+    //db.getData(keys.LAST_UPDATE, cb);
+  },
+  clean(cb) {
+    //db.getData(keys.SKIPPED, cb);
+  }
+*/
 
 exports['default'] = db;
 module.exports = exports['default'];
