@@ -5407,10 +5407,8 @@ Object.defineProperty(exports, "__esModule", {
 var alarm = {
   actions: {},
   create: function create(name, alarmInfo, fn) {
-    chrome.alarms.clear(name, function () {
-      chrome.alarms.create(name, alarmInfo);
-      alarm.actions[name] = fn;
-    });
+    chrome.alarms.create(name, alarmInfo);
+    alarm.actions[name] = fn;
   },
   listen: function listen() {
     chrome.alarms.onAlarm.addListener(function (elem) {
@@ -5448,7 +5446,7 @@ var _alarm2 = _interopRequireDefault(_alarm);
 
 var url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/' + 'PlayableMarketServicesV2.svc/jsonp/FetchLiveEventsMatchWinnerJSONP' + '?unique=2_33_1&segmentID=613&languageCode=pe';
 
-function parseData(data) {
+function parseData(data, skips) {
   console.log('parsing');
   var liveEvents = data.FetchLiveEventsMatchWinnerJSONPResult.OngoingEvents;
   var niceData = liveEvents.map(function (ev) {
@@ -5456,17 +5454,27 @@ function parseData(data) {
       name: ev.name,
       events: ev.events.map(function (game) {
         var gameResults = 'Not yet';
+        var shouldNotify = true;
+        var shouldNotify2 = false;
         if (game.GameResults && game.GameResults[0] && game.GameResults[1].GameResultValue) {
           gameResults = game.GameResults[0].GameResultValue + '-' + game.GameResults[1].GameResultValue;
+          shouldNotify2 = game.GameResults[0].GameResultValue == game.GameResults[1].GameResultValue;
         }
         var teamsOdds = [{ team: 'no', odds: 'hay' }];
+        var odds = [];
         if (game.MarketGroups && game.MarketGroups[0] && game.MarketGroups[0].Markets) {
           teamsOdds = game.MarketGroups[0].Markets[0].MarketSelections.map(function (item) {
+            odds.push(item.Odds);
+            shouldNotify = shouldNotify && item.Odds >= 3;
             return {
               team: item.MarketSelectionName,
               odds: item.Odds
             };
           });
+        }
+        odds.sort().reverse();
+        if (!skips[game.EventId] && (shouldNotify || shouldNotify2 && odds[0] >= 2 && odds[1] >= 2)) {
+          _chromeNotification2['default'].create('' + game.EventName + ', result: ' + gameResults);
         }
         return {
           id: game.EventId,
@@ -5480,31 +5488,27 @@ function parseData(data) {
       })
     };
   });
-  _db2['default'].updateGames(niceData, function () {
-    console.log('saved');
-  });
+  _db2['default'].updateGames(niceData, function () {});
 }
 
 function getEvents() {
   _httpRequest2['default'].send(url, function (response) {
-    parseData(JSON.parse(response));
+    _db2['default'].getListSkip(function (skips) {
+      parseData(JSON.parse(response), skips);
+    });
   });
 }
 
 function cleanSkipped() {
-  console.log('cleaned');
-  /*db.clean(data => {
-    console.log('cleanSkipped', data);
-  }) */
-}
-console.log('lel123');
-
-_db2['default'].addSkipped(234343, function () {
-  _alarm2['default'].clearAll(function () {
-    _alarm2['default'].create('fetchEvents', { when: Date.now() + 1000, periodInMinutes: 1 }, getEvents);
-    _alarm2['default'].create('cleanSkip', { when: Date.now() + 2000, periodInMinutes: 360 }, cleanSkipped);
-    _alarm2['default'].listen();
+  _db2['default'].clean(function () {
+    console.log('cleanSkipped');
   });
+}
+
+_alarm2['default'].clearAll(function () {
+  _alarm2['default'].create('fetchEvents', { when: Date.now() + 1000, periodInMinutes: 1 }, getEvents);
+  _alarm2['default'].create('cleanSkip', { when: Date.now() + 2000, periodInMinutes: 360 }, cleanSkipped);
+  _alarm2['default'].listen();
 });
 
 },{"./alarm":11,"./chromeNotification":13,"./db":14,"./httpRequest":15}],13:[function(require,module,exports){
@@ -5514,8 +5518,14 @@ Object.defineProperty(exports, '__esModule', {
   value: true
 });
 var Notification = {
-  create: function create() {
-    console.log('created');
+  create: function create(message) {
+    var id = '' + new Date().getTime();
+    chrome.notifications.create(id, {
+      type: 'basic',
+      iconUrl: 'gcm_128.png',
+      title: 'Betsson',
+      message: message
+    }, function () {});
   }
 };
 
@@ -5564,15 +5574,53 @@ var db = {
       var data = arguments[0] === undefined ? {} : arguments[0];
 
       data[id] = new Date().getTime();
-      console.log('added', data);
-      chrome.storage.local.set(data, cb);
+      var params = {};
+      params[keys.SKIPPED] = data;
+      chrome.storage.local.set(params, cb);
+    });
+  },
+  getListSkip: function getListSkip(cb) {
+    db.getData(keys.SKIPPED, function () {
+      var list = arguments[0] === undefined ? {} : arguments[0];
+
+      cb(list);
+    });
+  },
+  removeSkipped: function removeSkipped(id, cb) {
+    db.getData(keys.SKIPPED, function (data) {
+      delete data[id];
+      var params = {};
+      params[keys.SKIPPED] = data;
+      chrome.storage.local.set(params, cb);
     });
   },
   getGames: function getGames(cb) {
     db.getData(keys.LAST_UPDATE, cb);
   },
   getData: function getData(key, cb) {
-    chrome.storage.local.get(key, cb);
+    chrome.storage.local.get(key, function (data) {
+      cb(data[key]);
+    });
+  },
+  clean: function clean(cb) {
+    db.getData(keys.SKIPPED, function (data) {
+      var toDelete = [];
+      var now = new Date().getTime();
+      var maxDiff = 1000 * 60 * 60 * 6;
+      for (var k in data) {
+        if (now - data[k] > maxDiff) {
+          toDelete.push(k);
+        }
+      }
+
+      toDelete.map(function (id) {
+        delete data[id];
+      });
+
+      var params = {};
+      params[keys.SKIPPED] = data;
+      chrome.storage.local.set(params, cb);
+    });
   }
 };
 

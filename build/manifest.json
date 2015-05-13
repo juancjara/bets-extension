@@ -10,7 +10,8 @@
     "storage",
     "https://ajax.googleapis.com/",
     "https://sbfacade.bpsgameserver.com/",
-    "alarms"
+    "alarms",
+    "notifications"
   ],
   "background": {
     "scripts": ["js/background-bundle.js"]

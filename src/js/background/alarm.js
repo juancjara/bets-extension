@@ -1,10 +1,8 @@
 let alarm = {
   actions: {},
   create(name, alarmInfo, fn) {
-    chrome.alarms.clear(name, () => {
-      chrome.alarms.create(name, alarmInfo);
-      alarm.actions[name] = fn;
-    })
+    chrome.alarms.create(name, alarmInfo);
+    alarm.actions[name] = fn;
   },
   listen() {
     chrome.alarms.onAlarm.addListener(elem => { 

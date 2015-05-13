@@ -11,12 +11,11 @@ let Main = React.createClass({
   },
 
   update() {
-    db.getGames(data => {
-      console.log('aca');
+    db.getGames((events) => {
       this.setState({
-        liveEvents: data.games,
-        time: data.time
-      });
+        liveEvents: events.games,
+        time: events.time
+      })
     })
   },
 
@@ -25,7 +24,6 @@ let Main = React.createClass({
   },
 
   render() {
-    debugger;
     let liveEvents = this.state.liveEvents.map((item, i) => {
       return (
         <div key = {i}>

@@ -25118,15 +25118,53 @@ var db = {
       var data = arguments[0] === undefined ? {} : arguments[0];
 
       data[id] = new Date().getTime();
-      console.log('added', data);
-      chrome.storage.local.set(data, cb);
+      var params = {};
+      params[keys.SKIPPED] = data;
+      chrome.storage.local.set(params, cb);
+    });
+  },
+  getListSkip: function getListSkip(cb) {
+    db.getData(keys.SKIPPED, function () {
+      var list = arguments[0] === undefined ? {} : arguments[0];
+
+      cb(list);
+    });
+  },
+  removeSkipped: function removeSkipped(id, cb) {
+    db.getData(keys.SKIPPED, function (data) {
+      delete data[id];
+      var params = {};
+      params[keys.SKIPPED] = data;
+      chrome.storage.local.set(params, cb);
     });
   },
   getGames: function getGames(cb) {
     db.getData(keys.LAST_UPDATE, cb);
   },
   getData: function getData(key, cb) {
-    chrome.storage.local.get(key, cb);
+    chrome.storage.local.get(key, function (data) {
+      cb(data[key]);
+    });
+  },
+  clean: function clean(cb) {
+    db.getData(keys.SKIPPED, function (data) {
+      var toDelete = [];
+      var now = new Date().getTime();
+      var maxDiff = 1000 * 60 * 60 * 6;
+      for (var k in data) {
+        if (now - data[k] > maxDiff) {
+          toDelete.push(k);
+        }
+      }
+
+      toDelete.map(function (id) {
+        delete data[id];
+      });
+
+      var params = {};
+      params[keys.SKIPPED] = data;
+      chrome.storage.local.set(params, cb);
+    });
   }
 };
 
@@ -25159,11 +25197,44 @@ var _TeamsOddsViewJsx = require('./TeamsOddsView.jsx');
 
 var _TeamsOddsViewJsx2 = _interopRequireDefault(_TeamsOddsViewJsx);
 
+var _backgroundDb = require('../background/db');
+
+var _backgroundDb2 = _interopRequireDefault(_backgroundDb);
+
 var EventView = _react2['default'].createClass({
   displayName: 'EventView',
 
+  getInitialState: function getInitialState() {
+    return {
+      skips: {}
+    };
+  },
+
+  componentDidMount: function componentDidMount() {
+    var _this = this;
+
+    _backgroundDb2['default'].getListSkip(function (skips) {
+      _this.setState({ skips: skips });
+    });
+  },
+
+  toggleCheckbox: function toggleCheckbox(id) {
+    var skips = this.state.skips;
+    if (id in this.state.skips) {
+      delete skips[id];
+      _backgroundDb2['default'].removeSkipped(id, function () {});
+    } else {
+      skips[id] = 'gg';
+      _backgroundDb2['default'].addSkipped(id, function () {});
+    }
+    this.setState({ skips: skips });
+  },
+
   render: function render() {
+    var _this2 = this;
+
     var events = this.props.events.map(function (event, i) {
+      var skiped = _this2.state.skips[event.id] ? true : false;
       return _react2['default'].createElement(
         'div',
         { className: 'event', key: i },
@@ -25177,7 +25248,11 @@ var EventView = _react2['default'].createClass({
           null,
           event.name,
           ' ',
-          event.periodName
+          event.periodName,
+          _react2['default'].createElement('input', {
+            type: 'checkbox',
+            checked: skiped,
+            onChange: _this2.toggleCheckbox.bind(null, event.id) })
         ),
         _react2['default'].createElement(
           'div',
@@ -25201,7 +25276,7 @@ var EventView = _react2['default'].createClass({
 exports['default'] = EventView;
 module.exports = exports['default'];
 
-},{"./TeamsOddsView.jsx":169,"react":164}],168:[function(require,module,exports){
+},{"../background/db":166,"./TeamsOddsView.jsx":169,"react":164}],168:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, '__esModule', {
@@ -25235,11 +25310,10 @@ var Main = _react2['default'].createClass({
   update: function update() {
     var _this = this;
 
-    _backgroundDb2['default'].getGames(function (data) {
-      console.log('aca');
+    _backgroundDb2['default'].getGames(function (events) {
       _this.setState({
-        liveEvents: data.games,
-        time: data.time
+        liveEvents: events.games,
+        time: events.time
       });
     });
   },
@@ -25249,7 +25323,6 @@ var Main = _react2['default'].createClass({
   },
 
   render: function render() {
-    debugger;
     var liveEvents = this.state.liveEvents.map(function (item, i) {
       return _react2['default'].createElement(
         'div',
