@@ -34,9 +34,6 @@ let EventView = React.createClass({
       return (
         <div className = 'event' key = {i}>
           <div>
-            {event.categoryName}
-          </div>
-          <div>
             {event.name} {event.periodName}
             <input 
               type = 'checkbox' 

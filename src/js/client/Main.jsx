@@ -28,7 +28,7 @@ let Main = React.createClass({
       return (
         <div key = {i}>
           <h2>{item.name}</h2>
-          <EventView events = {item.events} />          
+          <EventView events = {item.events} />
         </div>
       )
     })
