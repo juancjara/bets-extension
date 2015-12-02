@@ -13,6 +13,11 @@ let gamesWithResults = function(game) {
     game.GameResults[1].GameResultValue;
 };
 
+let calculateGameTime = function(game) {
+  game.elapsedTime = _.floor(game.MatchClockSeconds / 60);
+  return game;
+};
+
 let calculateResults = function(game) {
   game.results = [
     Number(game.GameResults[0].GameResultValue),
@@ -22,11 +27,11 @@ let calculateResults = function(game) {
 };
 
 let extractOdds = function(game) {
-  let teamOdds = [];
+  let teamsOdds = [];
 
   if (game.MarketGroups && game.MarketGroups[0] &&
       game.MarketGroups[0].Markets) {
-    teamOdds = game.MarketGroups[0].Markets[0]
+    teamsOdds = game.MarketGroups[0].Markets[0]
       .MarketSelections.map(item => {
         return {
           team: item.MarketSelectionName,
@@ -34,7 +39,7 @@ let extractOdds = function(game) {
         };
       });
   }
-  game.teamOdds = teamOdds;
+  game.teamsOdds = teamsOdds;
   return game;
 };
 
@@ -46,12 +51,13 @@ let extractViewData = function(game) {
     periodName: game.EventPeriodName,
     subCategoryName: game.SubCategoryName,
     gameResults: game.results,
-    teamsOdds: game.teamsOdss
+    teamsOdds: game.teamsOdds,
+    elapsedTime: game.elapsedTime
   };
 };
 
 let gameAlmostFinished = (game) => {
-
+  return game.elapsedTime > 60;
 };
 
 let goalsDiffGreaterEqualThan = (results, diff) => {
@@ -64,28 +70,29 @@ let oddsWinnerGreaterThan = (teamsOdds, minOdd) => {
 
 let shouldNotify = function(game) {
   if (!game.teamsOdds.length) return false;
+  if (!game.categoryName !== 'Fútbol') return false;
 
   let betAnySide = game.teamsOdds.reduce((acc, item) => acc && item.odds >= 2.0,
                                          true);
 
   let gameAlmostOverAndWon = gameAlmostFinished(game) &&
     game.teamsOdss.length === 3;
-    goalsDiffGreaterEqualThan(game.results, 2) &&
+    goalsDiffGreaterEqualThan(game.gameResults, 2) &&
     oddsWinnerGreaterThan(game.teamsOdds, 1.0);
 
-  let goalsDiffGreaterThan3 = goalsDiffGreaterEqualThan(game.results, 3) &&
+  let goalsDiffGreaterThan3 = goalsDiffGreaterEqualThan(game.gameResults, 3) &&
     oddsWinnerGreaterThan(game.teamsOdds, 1.0);
 
+  console.log(betAnySide, gameAlmostOverAndWon, goalsDiffGreaterThan3);
   return betAnySide || gameAlmostOverAndWon || goalsDiffGreaterThan3;
 };
 
-//assume all games should be notified if  they meet req
-let notifyGames = function({name, gameResults}) {
+let notify= function({name, gameResults}) {
   Notification.create(`${name}, result: ${gameResults}`);
 };
 
 var launchNotifications = function(events, skips) {
-  _.flatten(events)
+  _.flatten(_.pluck(events, 'games'))
     .filter(game => !skips[game.id])
     .filter(shouldNotify)
     .forEach(notify);
@@ -101,6 +108,7 @@ function parseData(data) {
       games: ev.events
         .filter(gamesWithResults)
         .map(calculateResults)
+        .map(calculateGameTime)
         .map(extractOdds)
         .map(extractViewData)
     };

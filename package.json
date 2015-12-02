@@ -6,7 +6,7 @@
   "scripts": {
     "watchBackground": "watchify src/js/background/app.js -o build/js/background-bundle.js -v",
     "watchClient": "watchify src/js/client/app.js -o build/js/clientBundle.js -v",
-    "start": "npm run watchClient & npm run watchBackground & gulp",
+    "watch": "npm run watchClient & npm run watchBackground & gulp",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {
@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "localforage": "^1.2.2",
+    "lodash": "^3.10.1",
     "moment": "^2.10.2",
     "react": "^0.13.1"
   },
