@@ -9,8 +9,7 @@ const url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/' +
   '?unique=2_33_1&segmentID=613&languageCode=pe';
 
 let gamesWithResults = function(game) {
-  return game.GameResults && game.GameResults[0] &&
-    game.GameResults[1].GameResultValue;
+  return game.GameResults && game.GameResults.length > 1;
 };
 
 let calculateGameTime = function(game) {
@@ -101,7 +100,6 @@ let shouldNotify = function(game) {
   let goalsDiffGreaterThan3 = goalsDiffGreaterEqualThan(game.gameResults, 3) &&
     oddsWinnerGreaterThan(game.teamsOdds, 1.0);
 
-  console.log(betAnySide, gameAlmostOverAndWon, goalsDiffGreaterThan3);
   return betAnySide || gameAlmostOverAndWon || goalsDiffGreaterThan3;
 };
 

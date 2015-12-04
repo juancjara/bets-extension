@@ -34,14 +34,14 @@ let EventView = React.createClass({
       return (
         <div className = 'event' key = {i}>
           <div>
-            {event.name} {event.periodName} {event.elapsedTime}
+            {event.name} {event.periodName}. Time: {event.elapsedTime}
             <input
               type = 'checkbox'
               checked = {skiped}
               onChange = {this.toggleCheckbox.bind(null, event.id)} />
           </div>
           <div>
-            {event.subCategoryName} {event.gameResults}
+            {event.subCategoryName}: {event.gameResults[0]} - {event.gameResults[1]}
           </div>
           <TeamsOddsView teamsOdds = {event.teamsOdds} />
         </div>

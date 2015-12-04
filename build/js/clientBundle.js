@@ -25959,7 +25959,7 @@ var EventView = _react2['default'].createClass({
           event.name,
           ' ',
           event.periodName,
-          ' ',
+          '. Time: ',
           event.elapsedTime,
           _react2['default'].createElement('input', {
             type: 'checkbox',
@@ -25970,8 +25970,10 @@ var EventView = _react2['default'].createClass({
           'div',
           null,
           event.subCategoryName,
-          ' ',
-          event.gameResults
+          ': ',
+          event.gameResults[0],
+          ' - ',
+          event.gameResults[1]
         ),
         _react2['default'].createElement(_TeamsOddsViewJsx2['default'], { teamsOdds: event.teamsOdds })
       );

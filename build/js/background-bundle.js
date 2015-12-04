@@ -18479,7 +18479,7 @@ var _alarm2 = _interopRequireDefault(_alarm);
 var url = 'https://sbfacade.bpsgameserver.com/PlayableMarketService/' + 'PlayableMarketServicesV2.svc/jsonp/FetchLiveEventsMatchWinnerJSONP' + '?unique=2_33_1&segmentID=613&languageCode=pe';
 
 var gamesWithResults = function gamesWithResults(game) {
-  return game.GameResults && game.GameResults[0] && game.GameResults[1].GameResultValue;
+  return game.GameResults && game.GameResults.length > 1;
 };
 
 var calculateGameTime = function calculateGameTime(game) {
@@ -18558,7 +18558,6 @@ var shouldNotify = function shouldNotify(game) {
 
   var goalsDiffGreaterThan3 = goalsDiffGreaterEqualThan(game.gameResults, 3) && oddsWinnerGreaterThan(game.teamsOdds, 1.0);
 
-  console.log(betAnySide, gameAlmostOverAndWon, goalsDiffGreaterThan3);
   return betAnySide || gameAlmostOverAndWon || goalsDiffGreaterThan3;
 };
 
