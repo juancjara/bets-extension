@@ -18546,8 +18546,8 @@ var oddsWinnerGreaterThan = function oddsWinnerGreaterThan(teamsOdds, minOdd) {
 };
 
 var shouldNotify = function shouldNotify(game) {
+  if (game.categoryName !== 'Fútbol') return false;
   if (!game.teamsOdds.length) return false;
-  if (!game.categoryName !== 'Fútbol') return false;
 
   var betAnySide = game.teamsOdds.reduce(function (acc, item) {
     return acc && item.odds >= 2.0;

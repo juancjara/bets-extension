@@ -86,8 +86,8 @@ let oddsWinnerGreaterThan = (teamsOdds, minOdd) => {
 };
 
 let shouldNotify = function(game) {
+  if (game.categoryName !== 'Fútbol') return false;
   if (!game.teamsOdds.length) return false;
-  if (!game.categoryName !== 'Fútbol') return false;
 
   let betAnySide = game.teamsOdds.reduce((acc, item) => acc && item.odds >= 2.0,
                                          true);
