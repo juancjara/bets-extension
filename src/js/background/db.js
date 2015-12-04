@@ -10,7 +10,7 @@ function formatKey(val) {
 const keys = {
   LAST_UPDATE: formatKey('lastUpd'),
   SKIPPED: formatKey('skipped')
-}
+};
 
 let db = {
   updateGames(games, cb) {
@@ -21,14 +21,16 @@ let db = {
     };
     chrome.storage.local.set(data, cb);
   },
+
   addSkipped(id, cb) {
     db.getData(keys.SKIPPED, (data = {}) => {
       data[id] = (new Date()).getTime();
       let params = {};
       params[keys.SKIPPED] = data;
       chrome.storage.local.set(params, cb);
-    })
+    });
   },
+
   getListSkip(cb) {
     db.getData(keys.SKIPPED, (list = {}) => {
       cb(list);

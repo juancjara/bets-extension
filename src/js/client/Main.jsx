@@ -15,8 +15,8 @@ let Main = React.createClass({
       this.setState({
         liveEvents: events.games,
         time: events.time
-      })
-    })
+      });
+    });
   },
 
   componentDidMount() {
@@ -24,14 +24,15 @@ let Main = React.createClass({
   },
 
   render() {
+    console.log(this.state.liveEvents);
     let liveEvents = this.state.liveEvents.map((item, i) => {
       return (
         <div key = {i}>
           <h2>{item.name}</h2>
-          <EventView events = {item.events} />
+          <EventView events = {item.games} />
         </div>
-      )
-    })
+      );
+    });
 
     return (
       <div>

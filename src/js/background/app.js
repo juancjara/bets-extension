@@ -56,6 +56,24 @@ let extractViewData = function(game) {
   };
 };
 
+var parseData = function(data) {
+  let liveEvents = data.FetchLiveEventsMatchWinnerJSONPResult
+        .OngoingEvents;
+
+  return liveEvents.map((ev) => {
+    return {
+      name: ev.name,
+      games: ev.events
+        .filter(gamesWithResults)
+        .map(calculateResults)
+        .map(calculateGameTime)
+        .map(extractOdds)
+        .map(extractViewData)
+    };
+  });
+};
+
+
 let gameAlmostFinished = (game) => {
   return game.elapsedTime > 60;
 };
@@ -98,30 +116,8 @@ var launchNotifications = function(events, skips) {
     .forEach(notify);
 };
 
-function parseData(data) {
-  let liveEvents = data.FetchLiveEventsMatchWinnerJSONPResult
-                    .OngoingEvents;
-
-  return liveEvents.map((ev) => {
-    return {
-      name: ev.name,
-      games: ev.events
-        .filter(gamesWithResults)
-        .map(calculateResults)
-        .map(calculateGameTime)
-        .map(extractOdds)
-        .map(extractViewData)
-    };
-  });
-}
-
-var cleanSkipped = function() {
-  db.clean(() => {
-    console.log('cleanSkipped');
-  });
-};
-
 var getEvents = function () {
+  console.log('get Events');
   httpRequest.send(url, (response) => {
     db.getListSkip((skips) => {
       let events = parseData(JSON.parse(response));
@@ -129,7 +125,13 @@ var getEvents = function () {
       db.updateGames(events, () => {});
     });
   });
-};;
+};
+
+var cleanSkipped = function() {
+  db.clean(() => {
+    console.log('cleanSkipped');
+  });
+};
 
 alarm.clearAll(()=> {
   alarm.create('fetchEvents', {when: Date.now() + 1000, periodInMinutes: 1},

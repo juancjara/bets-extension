@@ -25826,6 +25826,7 @@ var db = {
     };
     chrome.storage.local.set(data, cb);
   },
+
   addSkipped: function addSkipped(id, cb) {
     db.getData(keys.SKIPPED, function () {
       var data = arguments.length <= 0 || arguments[0] === undefined ? {} : arguments[0];
@@ -25836,6 +25837,7 @@ var db = {
       chrome.storage.local.set(params, cb);
     });
   },
+
   getListSkip: function getListSkip(cb) {
     db.getData(keys.SKIPPED, function () {
       var list = arguments.length <= 0 || arguments[0] === undefined ? {} : arguments[0];
@@ -25957,6 +25959,8 @@ var EventView = _react2['default'].createClass({
           event.name,
           ' ',
           event.periodName,
+          ' ',
+          event.elapsedTime,
           _react2['default'].createElement('input', {
             type: 'checkbox',
             checked: skiped,
@@ -26031,6 +26035,7 @@ var Main = _react2['default'].createClass({
   },
 
   render: function render() {
+    console.log(this.state.liveEvents);
     var liveEvents = this.state.liveEvents.map(function (item, i) {
       return _react2['default'].createElement(
         'div',
@@ -26040,7 +26045,7 @@ var Main = _react2['default'].createClass({
           null,
           item.name
         ),
-        _react2['default'].createElement(_EventViewJsx2['default'], { events: item.events })
+        _react2['default'].createElement(_EventViewJsx2['default'], { events: item.games })
       );
     });
 

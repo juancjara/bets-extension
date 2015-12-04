@@ -34,9 +34,9 @@ let EventView = React.createClass({
       return (
         <div className = 'event' key = {i}>
           <div>
-            {event.name} {event.periodName}
-            <input 
-              type = 'checkbox' 
+            {event.name} {event.periodName} {event.elapsedTime}
+            <input
+              type = 'checkbox'
               checked = {skiped}
               onChange = {this.toggleCheckbox.bind(null, event.id)} />
           </div>
@@ -45,14 +45,10 @@ let EventView = React.createClass({
           </div>
           <TeamsOddsView teamsOdds = {event.teamsOdds} />
         </div>
-      )
+      );
     });
 
-    return (
-      <div>
-        {events}
-      </div>
-    );
+    return <div>{events}</div>;
   }
 });
 

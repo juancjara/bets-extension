@@ -18520,6 +18520,17 @@ var extractViewData = function extractViewData(game) {
   };
 };
 
+var parseData = function parseData(data) {
+  var liveEvents = data.FetchLiveEventsMatchWinnerJSONPResult.OngoingEvents;
+
+  return liveEvents.map(function (ev) {
+    return {
+      name: ev.name,
+      games: ev.events.filter(gamesWithResults).map(calculateResults).map(calculateGameTime).map(extractOdds).map(extractViewData)
+    };
+  });
+};
+
 var gameAlmostFinished = function gameAlmostFinished(game) {
   return game.elapsedTime > 60;
 };
@@ -18564,16 +18575,16 @@ var launchNotifications = function launchNotifications(events, skips) {
   }).filter(shouldNotify).forEach(notify);
 };
 
-function parseData(data) {
-  var liveEvents = data.FetchLiveEventsMatchWinnerJSONPResult.OngoingEvents;
-
-  return liveEvents.map(function (ev) {
-    return {
-      name: ev.name,
-      games: ev.events.filter(gamesWithResults).map(calculateResults).map(calculateGameTime).map(extractOdds).map(extractViewData)
-    };
+var getEvents = function getEvents() {
+  console.log('get Events');
+  _httpRequest2['default'].send(url, function (response) {
+    _db2['default'].getListSkip(function (skips) {
+      var events = parseData(JSON.parse(response));
+      launchNotifications(events, skips);
+      _db2['default'].updateGames(events, function () {});
+    });
   });
-}
+};
 
 var cleanSkipped = function cleanSkipped() {
   _db2['default'].clean(function () {
@@ -18581,24 +18592,11 @@ var cleanSkipped = function cleanSkipped() {
   });
 };
 
-var getEvents = function getEvents() {
-  _httpRequest2['default'].send(url, function (response) {
-    _db2['default'].getListSkip(function (skips) {
-      var events = parseData(JSON.parse(response));
-      launchNotifications(events, skips);
-      // db.updateGames(events, () => {});
-    });
-  });
-};;
-
-getEvents();
-// alarm.clearAll(()=> {
-//   alarm.create('fetchEvents', {when: Date.now() + 1000, periodInMinutes: 1},
-//          getEvents);
-//   alarm.create('cleanSkip', {when: Date.now() + 2000, periodInMinutes: 360},
-//              cleanSkipped);
-//   alarm.listen();
-// });
+_alarm2['default'].clearAll(function () {
+  _alarm2['default'].create('fetchEvents', { when: Date.now() + 1000, periodInMinutes: 1 }, getEvents);
+  _alarm2['default'].create('cleanSkip', { when: Date.now() + 2000, periodInMinutes: 360 }, cleanSkipped);
+  _alarm2['default'].listen();
+});
 
 },{"./alarm":5,"./chromeNotification":7,"./db":8,"./httpRequest":9,"lodash":2}],7:[function(require,module,exports){
 'use strict';
@@ -18658,6 +18656,7 @@ var db = {
     };
     chrome.storage.local.set(data, cb);
   },
+
   addSkipped: function addSkipped(id, cb) {
     db.getData(keys.SKIPPED, function () {
       var data = arguments.length <= 0 || arguments[0] === undefined ? {} : arguments[0];
@@ -18668,6 +18667,7 @@ var db = {
       chrome.storage.local.set(params, cb);
     });
   },
+
   getListSkip: function getListSkip(cb) {
     db.getData(keys.SKIPPED, function () {
       var list = arguments.length <= 0 || arguments[0] === undefined ? {} : arguments[0];
