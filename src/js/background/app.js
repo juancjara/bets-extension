@@ -93,7 +93,6 @@ let shouldNotify = function(game) {
                                          true);
 
   let gameAlmostOverAndWon = gameAlmostFinished(game) &&
-    game.teamsOdss.length === 3;
     goalsDiffGreaterEqualThan(game.gameResults, 2) &&
     oddsWinnerGreaterThan(game.teamsOdds, 1.0);
 

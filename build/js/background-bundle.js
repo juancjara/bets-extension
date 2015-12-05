@@ -18553,8 +18553,7 @@ var shouldNotify = function shouldNotify(game) {
     return acc && item.odds >= 2.0;
   }, true);
 
-  var gameAlmostOverAndWon = gameAlmostFinished(game) && game.teamsOdss.length === 3;
-  goalsDiffGreaterEqualThan(game.gameResults, 2) && oddsWinnerGreaterThan(game.teamsOdds, 1.0);
+  var gameAlmostOverAndWon = gameAlmostFinished(game) && goalsDiffGreaterEqualThan(game.gameResults, 2) && oddsWinnerGreaterThan(game.teamsOdds, 1.0);
 
   var goalsDiffGreaterThan3 = goalsDiffGreaterEqualThan(game.gameResults, 3) && oddsWinnerGreaterThan(game.teamsOdds, 1.0);
 
