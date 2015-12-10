@@ -18545,12 +18545,12 @@ var getWinner = function getWinner(gameResults) {
 };
 
 var oddsWinnerGreaterThan = function oddsWinnerGreaterThan(_ref, minOdd) {
-  var teamOdds = _ref.teamOdds;
+  var teamsOdds = _ref.teamsOdds;
   var gameResults = _ref.gameResults;
 
-  var winnerIndex = getWinner(gameResuls);
+  var winnerIndex = getWinner(gameResults);
   if (winnerIndex < 0) return false;
-  return teamOdds[winnerIndex * 2] > minOdd;
+  return teamsOdds[winnerIndex * 2].odds > minOdd;
 };
 
 var shouldNotify = function shouldNotify(game) {

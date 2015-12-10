@@ -86,10 +86,10 @@ let getWinner = (gameResults) => {
   return gameResults[0] > gameResults[1] ? 0: 1;
 };
 
-let oddsWinnerGreaterThan = ({teamOdds, gameResults}, minOdd) => {
-  let winnerIndex = getWinner(gameResuls);
+let oddsWinnerGreaterThan = ({teamsOdds, gameResults}, minOdd) => {
+  let winnerIndex = getWinner(gameResults);
   if (winnerIndex < 0) return false;
-  return teamOdds[winnerIndex * 2] > minOdd;
+  return teamsOdds[winnerIndex * 2].odds > minOdd;
 };
 
 let shouldNotify = function(game) {
