@@ -18539,30 +18539,38 @@ var goalsDiffGreaterEqualThan = function goalsDiffGreaterEqualThan(results, diff
   return Math.abs(results[0] - results[1]) >= diff;
 };
 
-var oddsWinnerGreaterThan = function oddsWinnerGreaterThan(teamsOdds, minOdd) {
-  return teamsOdds.filter(function (x) {
-    return x.odds > minOdd;
-  }).length > 0;
+var getWinner = function getWinner(gameResults) {
+  if (gameResults[0] === gameResults[1]) return -1;
+  return gameResults[0] > gameResults[1] ? 0 : 1;
+};
+
+var oddsWinnerGreaterThan = function oddsWinnerGreaterThan(_ref, minOdd) {
+  var teamOdds = _ref.teamOdds;
+  var gameResults = _ref.gameResults;
+
+  var winnerIndex = getWinner(gameResuls);
+  if (winnerIndex < 0) return false;
+  return teamOdds[winnerIndex * 2] > minOdd;
 };
 
 var shouldNotify = function shouldNotify(game) {
   if (game.categoryName !== 'Fútbol') return false;
   if (!game.teamsOdds.length) return false;
 
-  var betAnySide = game.teamsOdds.reduce(function (acc, item) {
-    return acc && item.odds >= 2.0;
-  }, true);
+  var betAnySide = _lodash2['default'].every(game.teamsOdds, function (item) {
+    return item.odds >= 2;
+  });
 
-  var gameAlmostOverAndWon = gameAlmostFinished(game) && goalsDiffGreaterEqualThan(game.gameResults, 2) && oddsWinnerGreaterThan(game.teamsOdds, 1.0);
+  var gameAlmostOverAndWon = gameAlmostFinished(game) && goalsDiffGreaterEqualThan(game.gameResults, 2) && oddsWinnerGreaterThan(game, 1.0);
 
-  var goalsDiffGreaterThan3 = goalsDiffGreaterEqualThan(game.gameResults, 3) && oddsWinnerGreaterThan(game.teamsOdds, 1.0);
+  var goalsDiffGreaterThan3 = goalsDiffGreaterEqualThan(game.gameResults, 3) && oddsWinnerGreaterThan(game, 1.0);
 
   return betAnySide || gameAlmostOverAndWon || goalsDiffGreaterThan3;
 };
 
-var notify = function notify(_ref) {
-  var name = _ref.name;
-  var gameResults = _ref.gameResults;
+var notify = function notify(_ref2) {
+  var name = _ref2.name;
+  var gameResults = _ref2.gameResults;
 
   _chromeNotification2['default'].create(name + ', result: ' + gameResults);
 };

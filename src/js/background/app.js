@@ -81,23 +81,29 @@ let goalsDiffGreaterEqualThan = (results, diff) => {
   return Math.abs(results[0] - results[1]) >= diff;
 };
 
-let oddsWinnerGreaterThan = (teamsOdds, minOdd) => {
-  return teamsOdds.filter(x => x.odds > minOdd).length > 0;
+let getWinner = (gameResults) => {
+  if (gameResults[0] === gameResults[1]) return -1;
+  return gameResults[0] > gameResults[1] ? 0: 1;
+};
+
+let oddsWinnerGreaterThan = ({teamOdds, gameResults}, minOdd) => {
+  let winnerIndex = getWinner(gameResuls);
+  if (winnerIndex < 0) return false;
+  return teamOdds[winnerIndex * 2] > minOdd;
 };
 
 let shouldNotify = function(game) {
   if (game.categoryName !== 'Fútbol') return false;
   if (!game.teamsOdds.length) return false;
 
-  let betAnySide = game.teamsOdds.reduce((acc, item) => acc && item.odds >= 2.0,
-                                         true);
+  let betAnySide = _.every(game.teamsOdds, item => item.odds >= 2);
 
   let gameAlmostOverAndWon = gameAlmostFinished(game) &&
     goalsDiffGreaterEqualThan(game.gameResults, 2) &&
-    oddsWinnerGreaterThan(game.teamsOdds, 1.0);
+    oddsWinnerGreaterThan(game, 1.0);
 
   let goalsDiffGreaterThan3 = goalsDiffGreaterEqualThan(game.gameResults, 3) &&
-    oddsWinnerGreaterThan(game.teamsOdds, 1.0);
+    oddsWinnerGreaterThan(game, 1.0);
 
   return betAnySide || gameAlmostOverAndWon || goalsDiffGreaterThan3;
 };
